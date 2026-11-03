@@ -1,0 +1,2568 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>楊梅高中圖書館：3D實境密室逃脫與新生特訓</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0f172a;
+        }
+        #canvas-container {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        /* 玻璃擬態與科技感邊框 */
+        .hud-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+        }
+        .hud-panel-amber {
+            background: rgba(28, 25, 23, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(251, 191, 36, 0.4);
+        }
+        /* 警報紅光閃爍特效 */
+        @keyframes alarmPulse {
+            0%, 100% { box-shadow: inset 0 0 0px rgba(239, 68, 68, 0); }
+            50% { box-shadow: inset 0 0 120px rgba(239, 68, 68, 0.75); }
+        }
+        .alarm-active {
+            animation: alarmPulse 0.6s infinite;
+        }
+        /* 準星動畫 */
+        .crosshair-ring {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .crosshair-active {
+            transform: scale(1.45);
+            border-color: #38bdf8 !important;
+            background-color: rgba(56, 189, 248, 0.25);
+        }
+        /* 自訂捲軸 */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(56, 189, 248, 0.5);
+            border-radius: 9999px;
+        }
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body class="text-slate-100">
+
+    <!-- 3D 渲染容器 -->
+    <div id="canvas-container"></div>
+
+    <!-- 全螢幕警報紅光覆蓋層 -->
+    <div id="alarm-overlay" class="fixed inset-0 pointer-events-none z-20 transition-opacity duration-300 opacity-0"></div>
+
+    <!-- 樓層切換過場動畫層 -->
+    <div id="floor-transition" class="fixed inset-0 bg-slate-950 z-50 flex flex-col items-center justify-center pointer-events-none opacity-0 transition-opacity duration-500">
+        <div class="w-16 h-16 border-4 border-sky-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <h2 id="floor-transition-title" class="text-3xl font-black tracking-widest text-sky-400">正在前往 2F 書庫區...</h2>
+        <p id="floor-transition-sub" class="text-slate-400 mt-2 text-sm">請保持安靜，切勿在樓梯間奔跑</p>
+    </div>
+
+    <!-- 畫面中央準星與 3D 物件互動浮動提示 -->
+    <div class="fixed inset-0 pointer-events-none z-10 flex items-center justify-center">
+        <div id="crosshair" class="crosshair-ring w-5 h-5 rounded-full border-2 border-white/70 flex items-center justify-center">
+            <div class="w-1.5 h-1.5 bg-sky-400 rounded-full"></div>
+        </div>
+        <!-- 鎖定物件時的互動標籤 -->
+        <div id="target-prompt" class="hidden absolute mt-24 px-4 py-2 rounded-xl hud-panel border-sky-400/80 text-center transform transition-all">
+            <div id="target-name" class="text-sm font-bold text-sky-300 tracking-wide">物件名稱</div>
+            <div id="target-action" class="text-xs text-amber-300 mt-0.5 flex items-center justify-center gap-1">
+                <span class="px-1.5 py-0.5 bg-amber-500/20 border border-amber-400/50 rounded text-[11px] font-mono">E</span>
+                <span>或點擊畫面互動</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 頂部狀態與情境模擬列 (Top HUD) ==================== -->
+    <header class="fixed top-0 left-0 right-0 z-20 p-2 sm:p-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+        <!-- 左側：樓層、座標與時段模擬器 -->
+        <div class="flex items-center gap-2 pointer-events-auto">
+            <div class="hud-panel px-3 py-1.5 rounded-xl flex items-center gap-2.5">
+                <div id="floor-badge" class="bg-sky-500 text-slate-950 font-black px-2.5 py-1 rounded-lg text-sm tracking-wider">1F</div>
+                <div>
+                    <div class="text-xs text-slate-400 flex items-center gap-1">
+                        <i class="fa-solid fa-location-dot text-sky-400"></i>
+                        <span id="zone-name-display" class="font-bold text-white">大門入口外</span>
+                    </div>
+                    <div class="text-[11px] text-slate-400 flex items-center gap-2">
+                        <span>開放：08:00~16:00</span>
+                        <span id="broadcast-badge" class="text-emerald-400"><i class="fa-solid fa-music mr-1"></i>公播輕音樂中</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 動態時段切換器 -->
+            <div class="hud-panel px-3 py-1.5 rounded-xl hidden md:flex items-center gap-2">
+                <i class="fa-regular fa-clock text-amber-400 text-sm"></i>
+                <span class="text-xs text-slate-300">模擬時段：</span>
+                <select id="time-slot-select" onchange="changeTimeSlot(this.value)" class="bg-slate-800 text-amber-300 text-xs font-bold px-2 py-1 rounded-lg border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer">
+                    <option value="normal">10:15 上課時間 (需學生證+洽公證明)</option>
+                    <option value="open">12:35 一般開放時間 (08:00~16:00)</option>
+                    <option value="noon">12:10 中午新聞時段 (播放25分新聞/午休規定)</option>
+                    <option value="cleaning">15:10 打掃時間 (原則禁止入館)</option>
+                    <option value="period8">16:15 第8堂館務時間 (未上輔導課可自習)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 中央：即時提示訊息橫幅 -->
+        <div id="toast-banner" class="hidden pointer-events-auto hud-panel border-amber-400 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold text-amber-200 flex items-center gap-2 shadow-lg max-w-md">
+            <i id="toast-icon" class="fa-solid fa-circle-info text-amber-400 text-base"></i>
+            <span id="toast-text">系統提示訊息</span>
+        </div>
+
+        <!-- 右側：守規值、悠遊卡餘額、步態與快速選單 -->
+        <div class="flex items-center gap-2 pointer-events-auto">
+            <!-- 守規值計量表 -->
+            <div class="hud-panel px-3 py-1.5 rounded-xl flex items-center gap-3">
+                <div class="text-right">
+                    <div class="text-[10px] text-slate-400 uppercase tracking-wider">圖書館守規值</div>
+                    <div class="flex items-center gap-1.5">
+                        <div class="w-16 sm:w-20 h-2 bg-slate-700 rounded-full overflow-hidden">
+                            <div id="compliance-bar" class="h-full bg-emerald-400 transition-all duration-300" style="width: 100%"></div>
+                        </div>
+                        <span id="compliance-score" class="mono-font text-xs sm:text-sm font-bold text-emerald-400">100</span>
+                    </div>
+                </div>
+                <div class="h-6 w-[1px] bg-slate-700"></div>
+                <div class="text-right">
+                    <div class="text-[10px] text-slate-400">悠遊卡餘額</div>
+                    <div class="mono-font text-xs sm:text-sm font-bold text-sky-400">$<span id="easycard-balance">5</span></div>
+                </div>
+            </div>
+
+            <!-- 音效開關與說明按鈕 -->
+            <button onclick="toggleMute()" id="mute-btn" class="hud-panel w-9 h-9 rounded-xl flex items-center justify-center text-sky-400 hover:bg-slate-800 transition" title="音效開關">
+                <i class="fa-solid fa-volume-high"></i>
+            </button>
+            <button onclick="openModal('manual-modal')" class="hud-panel px-3 h-9 rounded-xl flex items-center gap-1.5 text-xs font-bold text-amber-300 hover:bg-slate-800 transition">
+                <i class="fa-solid fa-book-open"></i>
+                <span class="hidden sm:inline">利用教育手冊</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ==================== 左側：六大連鎖實境任務追蹤面板 ==================== -->
+    <aside id="quest-sidebar" class="fixed left-2 sm:left-3 top-16 sm:top-20 z-20 w-72 sm:w-80 pointer-events-auto transition-transform duration-300">
+        <div class="hud-panel rounded-2xl overflow-hidden">
+            <div class="bg-slate-900/90 px-3.5 py-2.5 border-b border-slate-700/80 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping"></span>
+                    <h3 class="text-xs sm:text-sm font-black tracking-wide text-white">新生特訓：六大連鎖任務</h3>
+                </div>
+                <button onclick="toggleQuestPanel()" class="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded bg-slate-800">
+                    <i id="quest-collapse-icon" class="fa-solid fa-chevron-up"></i>
+                </button>
+            </div>
+            <div id="quest-content" class="p-3 space-y-2 max-h-[52vh] overflow-y-auto">
+                <!-- 動態渲染任務清單 -->
+                <div id="quest-list" class="space-y-1.5 text-xs"></div>
+
+                <!-- 當前步驟詳細指引 -->
+                <div class="mt-2 pt-2 border-t border-slate-700/80 bg-sky-950/40 p-2.5 rounded-xl border border-sky-500/30">
+                    <div class="text-[11px] font-bold text-sky-300 flex items-center justify-between">
+                        <span><i class="fa-solid fa-compass mr-1"></i>目前行動指引</span>
+                        <button onclick="autoNavigateCurrentTask()" class="text-[10px] bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 px-2 py-0.5 rounded border border-sky-400/40 transition">
+                            <i class="fa-solid fa-location-arrow mr-0.5"></i>瞬移至目標區
+                        </button>
+                    </div>
+                    <p id="current-task-hint" class="text-xs text-slate-200 mt-1 leading-relaxed">
+                        請先前往 1F 西南角「置物櫃」存放書包與礦泉水，並將手機切換為靜音收起！
+                    </p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ==================== 右側：2D 互動式雙層平面雷達圖 (Minimap) ==================== -->
+    <aside class="fixed right-2 sm:right-3 top-16 sm:top-20 z-20 pointer-events-auto flex flex-col items-end">
+        <div class="hud-panel rounded-2xl p-2.5 w-60 sm:w-72">
+            <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                    <i class="fa-solid fa-map text-sky-400 text-xs"></i>
+                    <span class="text-xs font-bold text-white">空間配置雷達圖</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button id="map-btn-1f" onclick="switchMinimapView(1)" class="px-2 py-0.5 rounded text-[11px] font-bold bg-sky-500 text-slate-950">1F</button>
+                    <button id="map-btn-2f" onclick="switchMinimapView(2)" class="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-slate-300 hover:bg-slate-700">2F</button>
+                    <button onclick="openModal('fullmap-modal')" class="px-1.5 py-0.5 rounded text-[11px] bg-slate-800 text-amber-300 hover:bg-slate-700" title="放大平面圖與快速移動">
+                        <i class="fa-solid fa-expand"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- 2D 即時 Canvas 平面圖 -->
+            <div class="relative w-full aspect-[16/10] bg-slate-900 rounded-xl overflow-hidden border border-slate-700 cursor-pointer" onclick="openModal('fullmap-modal')" title="點擊放大平面圖並可快速巡航">
+                <canvas id="minimap-canvas" width="320" height="200" class="w-full h-full block"></canvas>
+            </div>
+            <div class="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
+                <span><span class="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-1"></span>玩家位置</span>
+                <span><span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-ping mr-1"></span>任務目標</span>
+                <span class="text-sky-300 cursor-pointer hover:underline" onclick="openModal('fullmap-modal')">點擊地圖快速導航</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ==================== 底部：隨身物品欄、手持槽與複合動作控制列 ==================== -->
+    <footer class="fixed bottom-2 left-2 right-2 z-20 pointer-events-none flex flex-col sm:flex-row items-center justify-between gap-2">
+        <!-- 左下：虛擬移動搖桿與步態控制（支援觸控與滑鼠點擊操作） -->
+        <div class="pointer-events-auto hud-panel p-2 rounded-2xl flex items-center gap-2">
+            <!-- 十字方向鍵 -->
+            <div class="grid grid-cols-3 gap-1 w-24 h-24">
+                <div></div>
+                <button onmousedown="setTouchMove('forward',true)" onmouseup="setTouchMove('forward',false)" ontouchstart="setTouchMove('forward',true)" ontouchend="setTouchMove('forward',false)" class="bg-slate-800 hover:bg-sky-500/30 active:bg-sky-500 text-white rounded-lg flex items-center justify-center border border-slate-600"><i class="fa-solid fa-caret-up"></i></button>
+                <div></div>
+                <button onmousedown="setTouchMove('left',true)" onmouseup="setTouchMove('left',false)" ontouchstart="setTouchMove('left',true)" ontouchend="setTouchMove('left',false)" class="bg-slate-800 hover:bg-sky-500/30 active:bg-sky-500 text-white rounded-lg flex items-center justify-center border border-slate-600"><i class="fa-solid fa-caret-left"></i></button>
+                <button onclick="interactWithCurrentTarget()" class="bg-amber-500/30 hover:bg-amber-500/50 text-amber-300 rounded-lg flex items-center justify-center border border-amber-400/50 font-bold text-xs" title="互動 (E)">E</button>
+                <button onmousedown="setTouchMove('right',true)" onmouseup="setTouchMove('right',false)" ontouchstart="setTouchMove('right',true)" ontouchend="setTouchMove('right',false)" class="bg-slate-800 hover:bg-sky-500/30 active:bg-sky-500 text-white rounded-lg flex items-center justify-center border border-slate-600"><i class="fa-solid fa-caret-right"></i></button>
+                <div></div>
+                <button onmousedown="setTouchMove('backward',true)" onmouseup="setTouchMove('backward',false)" ontouchstart="setTouchMove('backward',true)" ontouchend="setTouchMove('backward',false)" class="bg-slate-800 hover:bg-sky-500/30 active:bg-sky-500 text-white rounded-lg flex items-center justify-center border border-slate-600"><i class="fa-solid fa-caret-down"></i></button>
+                <div></div>
+            </div>
+
+            <!-- 步態與行為控制按鈕 -->
+            <div class="flex flex-col gap-1.5 text-xs">
+                <button id="gait-toggle-btn" onclick="toggleSprintMode()" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold flex items-center gap-1.5 transition">
+                    <i id="gait-icon" class="fa-solid fa-person-walking"></i>
+                    <span id="gait-text">慢步安靜行進</span>
+                </button>
+                <button id="phone-toggle-btn" onclick="togglePhoneSilence()" class="px-2.5 py-1.5 rounded-lg bg-rose-500/30 border border-rose-400 text-rose-200 font-bold flex items-center gap-1.5 transition animate-pulse">
+                    <i id="phone-icon" class="fa-solid fa-mobile-screen-button"></i>
+                    <span id="phone-text">手機：響鈴中(違規)</span>
+                </button>
+                <div class="text-[10px] text-slate-400 text-center">WASD移動 / 滑鼠拖曳視角</div>
+            </div>
+        </div>
+
+        <!-- 中下：隨身物品欄與手持裝備槽 (Inventory & Hand Slot) -->
+        <div class="pointer-events-auto hud-panel px-3 py-2 rounded-2xl flex items-center gap-2 max-w-full overflow-x-auto">
+            <div class="text-xs font-bold text-slate-300 pr-2 border-r border-slate-700 shrink-0">
+                <div>隨身物品</div>
+                <div class="text-[10px] text-sky-400 font-normal">點擊切換手持</div>
+            </div>
+            <div id="inventory-bar" class="flex items-center gap-1.5">
+                <!-- 由 JS 動態渲染隨身物品 -->
+            </div>
+        </div>
+
+        <!-- 右下：借書籃與快捷樓層切換 -->
+        <div class="pointer-events-auto hud-panel px-3 py-2 rounded-2xl flex items-center gap-2">
+            <button onclick="openModal('basket-modal')" class="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-300 flex items-center gap-2 text-xs font-bold transition">
+                <i class="fa-solid fa-basket-shopping text-sm"></i>
+                <div class="text-left">
+                    <div>借書籃 (<span id="basket-count">0</span>/4)</div>
+                    <div class="text-[10px] text-amber-200/80 font-normal">檢視已選館藏</div>
+                </div>
+            </button>
+            <button onclick="quickSwitchFloor()" class="px-3 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/50 text-sky-300 flex items-center gap-2 text-xs font-bold transition" title="透過東南角樓梯切換樓層">
+                <i class="fa-solid fa-stairs text-sm"></i>
+                <div class="text-left">
+                    <div id="stair-btn-label">前往 2F</div>
+                    <div class="text-[10px] text-sky-200/80 font-normal">樓梯傳送</div>
+                </div>
+            </button>
+        </div>
+    </footer>
+
+    <!-- ==================== 互動彈窗系統 (Modals) ==================== -->
+
+    <!-- 0. 開場任務簡報彈窗 -->
+    <div id="welcome-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-2xl w-full rounded-3xl p-6 sm:p-8 border-2 border-sky-400/60 shadow-2xl">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-12 h-12 rounded-2xl bg-sky-500 flex items-center justify-center text-slate-950 text-2xl font-black">
+                    <i class="fa-solid fa-vr-cardboard"></i>
+                </div>
+                <div>
+                    <span class="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40">115學年新生利用教育 3D 實境密室逃脫</span>
+                    <h1 class="text-2xl sm:text-3xl font-black text-white mt-0.5">楊梅高中圖書館：新生特訓行動</h1>
+                </div>
+            </div>
+
+            <p class="text-sm text-slate-300 leading-relaxed mb-4">
+                歡迎來到楊梅高中圖書館！這是一座完全依據 **1F 與 2F 實體空間配置圖** 打造的 3D 互動場館。身為大一新生，你必須親自走遍一樓與二樓各個角落，嚴格遵守圖書館規範，完成 **6 大連鎖複合實境任務**。
+            </p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5 text-xs">
+                <div class="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-700">
+                    <div class="font-bold text-sky-400 mb-1.5 flex items-center gap-1.5">
+                        <i class="fa-solid fa-gamepad"></i> 3D 實境操作方式
+                    </div>
+                    <ul class="space-y-1 text-slate-300">
+                        <li>• <b>移動位置</b>：鍵盤 <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-600">W</kbd><kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-600">A</kbd><kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-600">S</kbd><kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-600">D</kbd> 或左下角方向鍵</li>
+                        <li>• <b>旋轉視角</b>：按住滑鼠左鍵拖曳畫面，或觸控滑動</li>
+                        <li>• <b>物件互動</b>：靠近發光設施按 <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-600">E</kbd> 鍵或直接點擊該 3D 設施</li>
+                        <li>• <b>快速導航</b>：點擊右上角「2D 雷達平面圖」可瞬移至各區域</li>
+                    </ul>
+                </div>
+                <div class="bg-slate-900/90 p-3.5 rounded-2xl border border-rose-500/40">
+                    <div class="font-bold text-rose-400 mb-1.5 flex items-center gap-1.5">
+                        <i class="fa-solid fa-triangle-exclamation"></i> 嚴格防呆與監控警報
+                    </div>
+                    <ul class="space-y-1 text-slate-300">
+                        <li>• <b>禁止攜帶入館</b>：書包、礦泉水/飲料必須先存入 1F 左下角「置物櫃」！</li>
+                        <li>• <b>手機與步態</b>：入館前須將手機調為靜音收起；館內按 Shift 奔跑或玩弄椅子會被監控扣分！</li>
+                        <li>• <b>RFID 安全門</b>：夾帶未借閱圖書、當月期刊或漫畫闖越 1F 大門將觸發警報！</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-3">
+                <button onclick="closeModal('welcome-modal'); initAudio();" class="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-sky-400 to-blue-500 hover:from-sky-300 hover:to-blue-400 text-slate-950 font-black text-sm shadow-lg shadow-sky-500/30 transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-door-open"></i> 開始 3D 實境特訓（抵達 1F 大門外）
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 1. 1F 西南角置物櫃互動彈窗 (任務一) -->
+    <div id="locker-modal" class="hidden fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="hud-panel max-w-lg w-full rounded-3xl p-6 border border-sky-400/50">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-boxes-stacked text-sky-400 text-xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">1F 西南角：讀者個人置物櫃</h3>
+                        <p class="text-xs text-slate-400">規定：不可攜帶飲食(含礦泉水)、書包入館；但可攜帶自己的書籍入館閱讀。</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('locker-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="my-4 space-y-2.5" id="locker-items-container">
+                <!-- 動態渲染置物櫃存取狀態 -->
+            </div>
+
+            <div class="bg-amber-950/50 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-200 mb-4">
+                <i class="fa-solid fa-lightbulb text-amber-400 mr-1"></i>
+                <b>複合操作提示：</b>請將「書包」與「礦泉水」存入置物櫃，並務必保留「學生證」、「悠遊卡」與「個人自習參考書」在身上！另外別忘了點擊左下角按鈕將<b>手機調為靜音收起</b>。
+            </div>
+
+            <div class="flex justify-end">
+                <button onclick="closeModal('locker-modal')" class="px-5 py-2 rounded-xl bg-sky-500 text-slate-950 font-bold text-xs">完成整理並鎖上櫃門</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 1F 資訊檢索區電腦桌面模擬器 (任務二：OPAC 查詢 & 新書推薦 & 釣魚防範) -->
+    <div id="computer-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-4xl bg-slate-900 rounded-2xl border-4 border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- 電腦螢幕頂部邊框 -->
+            <div class="bg-slate-800 px-4 py-2 flex items-center justify-between border-b border-slate-700">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-rose-500"></span>
+                    <span class="w-3 h-3 rounded-full bg-amber-400"></span>
+                    <span class="w-3 h-3 rounded-full bg-emerald-400"></span>
+                    <span class="text-xs font-mono text-slate-300 ml-2">YMHS-LIB-PC03 — 1F 資訊檢索區專用電腦</span>
+                </div>
+                <button onclick="closeModal('computer-modal')" class="text-xs bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-2.5 py-1 rounded border border-rose-500/40 font-bold">
+                    <i class="fa-solid fa-power-off mr-1"></i>離開電腦
+                </button>
+            </div>
+
+            <!-- 電腦畫面主體 -->
+            <div class="p-4 sm:p-6 overflow-y-auto flex-1 bg-gradient-to-br from-slate-900 via-sky-950/40 to-slate-900">
+                <!-- 頂部桌面捷徑列（含違規釣魚陷阱） -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                    <button onclick="switchPcTab('opac')" id="pc-tab-opac" class="p-3 rounded-xl bg-sky-500/20 border-2 border-sky-400 text-left transition flex items-center gap-3">
+                        <i class="fa-solid fa-magnifying-glass-chart text-2xl text-sky-400"></i>
+                        <div>
+                            <div class="text-xs font-black text-white">館藏圖書查詢</div>
+                            <div class="text-[10px] text-sky-300">OPAC 檢索系統</div>
+                        </div>
+                    </button>
+                    <button onclick="switchPcTab('recommend')" id="pc-tab-recommend" class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 hover:border-sky-400 text-left transition flex items-center gap-3">
+                        <i class="fa-solid fa-book-medical text-2xl text-emerald-400"></i>
+                        <div>
+                            <div class="text-xs font-black text-white">新書推薦系統</div>
+                            <div class="text-[10px] text-slate-400">五步驟流程排序</div>
+                        </div>
+                    </button>
+                    <button onclick="switchPcTab('ebook')" id="pc-tab-ebook" class="p-3 rounded-xl bg-slate-800/80 border border-slate-700 hover:border-sky-400 text-left transition flex items-center gap-3">
+                        <i class="fa-solid fa-cloud-arrow-down text-2xl text-amber-400"></i>
+                        <div>
+                            <div class="text-xs font-black text-white">線上資源/電子書</div>
+                            <div class="text-[10px] text-slate-400">學校首頁點選進入</div>
+                        </div>
+                    </button>
+                    <!-- 陷阱：不當網頁 -->
+                    <button onclick="triggerBadWebsiteTrap()" class="p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 hover:border-rose-400 text-left transition flex items-center gap-3">
+                        <i class="fa-solid fa-skull-crossbones text-2xl text-rose-400"></i>
+                        <div>
+                            <div class="text-xs font-black text-rose-200">免費外掛電玩網</div>
+                            <div class="text-[10px] text-rose-400">不明外部連線</div>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- 分頁 1：館藏圖書查詢步驟驗證與檢索 -->
+                <div id="pc-content-opac" class="bg-slate-950/80 rounded-2xl p-4 border border-slate-800">
+                    <h4 class="text-sm font-bold text-sky-300 mb-2">
+                        <i class="fa-solid fa-list-ol mr-1"></i>第一階段：請依序點選「本校圖書查詢系統」正確 5 步驟
+                    </h4>
+                    <p class="text-xs text-slate-400 mb-3">說明資料規定：請依正確順序點擊下方按鈕完成路徑驗證：</p>
+
+                    <!-- 已選擇步驟顯示 -->
+                    <div id="opac-step-display" class="min-h-[42px] p-2 rounded-xl bg-slate-900 border border-slate-700 flex flex-wrap items-center gap-1.5 mb-3 text-xs">
+                        <span class="text-slate-500 italic">尚未點選步驟...</span>
+                    </div>
+
+                    <!-- 候選步驟按鈕 -->
+                    <div id="opac-step-buttons" class="flex flex-wrap gap-2 mb-4">
+                        <!-- 由 JS 打亂渲染 -->
+                    </div>
+
+                    <!-- 步驟正確後解鎖之實際查詢區 -->
+                    <div id="opac-search-box" class="hidden pt-4 border-t border-slate-800">
+                        <div class="flex flex-col sm:flex-row gap-2 mb-3">
+                            <select id="opac-search-type" class="bg-slate-800 text-white text-xs rounded-lg px-3 py-2 border border-slate-600">
+                                <option value="keyword">關鍵字查詢</option>
+                                <option value="isbn">ISBN 查詢</option>
+                            </select>
+                            <input id="opac-search-input" type="text" value="半導體與AI科學導論" class="flex-1 bg-slate-800 text-white text-xs rounded-lg px-3 py-2 border border-slate-600" placeholder="輸入書名關鍵字或 ISBN...">
+                            <button onclick="executeOpacSearch()" class="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg">開始查詢</button>
+                        </div>
+                        <div id="opac-search-result" class="hidden bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-3 text-xs space-y-1">
+                            <div class="font-bold text-emerald-300"><i class="fa-solid fa-circle-check mr-1"></i>館藏查詢成功！請記下館藏位置並前往 2F 書庫取書：</div>
+                            <div class="text-slate-200">• <b>指定借閱圖書 1~3</b>：位於 <b>2F 書庫【第 3 排、第 6 排、第 9 排書架】</b>（一般可外借圖書）</div>
+                            <div class="text-slate-200">• <b>過期雜誌合訂本</b>：已移置 <b>2F 書庫【第 2 排書架】</b>（可供讀者外借！）</div>
+                            <div class="text-amber-300">• <b>特別注意</b>：1F 當月期刊、1F 梅高特藏區、2F 漫畫區（第 5 排）均<b>限館內閱讀不外借</b>；2F 影音區（第 8 排）學生僅可借<b>家用版 DVD</b>！</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分頁 2：新書推薦系統五步驟驗證 -->
+                <div id="pc-content-recommend" class="hidden bg-slate-950/80 rounded-2xl p-4 border border-slate-800">
+                    <h4 class="text-sm font-bold text-emerald-300 mb-2">
+                        <i class="fa-solid fa-book-medical mr-1"></i>第二階段：如何推薦圖書館購買新書？（Q11 流程排序）
+                    </h4>
+                    <p class="text-xs text-slate-400 mb-3">請依照《新生利用教育說明資料》Q11 的正確順序點選 5 個步驟：</p>
+                    <div id="rec-step-display" class="min-h-[42px] p-2 rounded-xl bg-slate-900 border border-slate-700 flex flex-wrap items-center gap-1.5 mb-3 text-xs">
+                        <span class="text-slate-500 italic">尚未點選步驟...</span>
+                    </div>
+                    <div id="rec-step-buttons" class="flex flex-wrap gap-2 mb-3"></div>
+                    <div id="rec-success-msg" class="hidden p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs text-emerald-300 font-bold">
+                        <i class="fa-solid fa-check-double mr-1"></i>新書推薦申請已送出交由圖書館審核！
+                    </div>
+                </div>
+
+                <!-- 分頁 3：線上資源與電子書說明 -->
+                <div id="pc-content-ebook" class="hidden bg-slate-950/80 rounded-2xl p-4 border border-slate-800 text-xs space-y-2">
+                    <h4 class="text-sm font-bold text-amber-300"><i class="fa-solid fa-laptop-file mr-1"></i>線上資源與電子書使用規範</h4>
+                    <p class="text-slate-300">• 線上資源、電子書請由「學校首頁」點選進入閱讀和借用（部分資源限校內 IP 閱讀）。</p>
+                    <p class="text-rose-300">• 嚴格禁止使用資訊檢索電腦連線任何不當網頁，違者經查證、記錄後將受<b>校規警告以上處分</b>。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. 借書籃與 2F/1F 館藏挑選彈窗 (任務三) -->
+    <div id="basket-modal" class="hidden fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="hud-panel max-w-xl w-full rounded-3xl p-6 border border-amber-400/50">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-basket-shopping text-amber-400 text-xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">讀者待借館藏提籃</h3>
+                        <p class="text-xs text-slate-400">規定：每人最多可借 4 本，借期 2 週（須於開放日 16:00 前至 1F 櫃台完成借書）。</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('basket-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div id="basket-items-list" class="my-4 space-y-2 max-h-64 overflow-y-auto"></div>
+
+            <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-700 text-xs text-slate-300 mb-4">
+                <div class="font-bold text-sky-300 mb-1">任務三目標檢核：</div>
+                <div>請在 2F 書庫收集 <b>4 本可外借之館藏（含 3 本一般圖書 + 1 本二樓過期雜誌）</b>，以及 <b>1 張家用版 DVD</b>，並移除任何不可外借的違規館藏（當月期刊、漫畫、特藏刊物、公播版DVD），再前往 <b>1F 借還書櫃台</b>辦理！</div>
+            </div>
+
+            <div class="flex justify-end">
+                <button onclick="closeModal('basket-modal')" class="px-5 py-2 rounded-xl bg-amber-400 text-slate-950 font-bold text-xs">繼續探索</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. 1F 借還書櫃台（讀者服務櫃台）複合互動彈窗 (任務一登記 & 任務三借還續借與逾期計算) -->
+    <div id="counter-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-2xl w-full rounded-3xl p-6 border border-sky-400/60 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-id-card-clip text-sky-400 text-2xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">1F 讀者服務櫃台（借還書櫃台）</h3>
+                        <p class="text-xs text-slate-400">辦理入館登記、一樓櫃台借還書、續借申請與逾期權限核算</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('counter-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="space-y-4 my-4 text-xs">
+                <!-- 區塊 A：入館身分與時段查驗 (任務一) -->
+                <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-700">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="font-bold text-sky-300 text-sm"><i class="fa-solid fa-user-check mr-1.5"></i>1. 入館安檢與時段登記查驗（任務一）</span>
+                        <span id="counter-task1-badge" class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">待查驗</span>
+                    </div>
+                    <p class="text-slate-300 mb-3">
+                        學生於上課時間進入圖書館須攜帶<b>學生證</b>登記並獲教師同意（簽署洽公證明），未帶學生證者不得留館。且身上不得有書包、礦泉水，手機須靜音收起。
+                    </p>
+                    <button onclick="verifyTask1AtCounter()" class="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black transition">
+                        出示【學生證 + 導師洽公證明】完成入館登記
+                    </button>
+                </div>
+
+                <!-- 區塊 B：圖書借閱審查與逾期/續借情境題 (任務三) -->
+                <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-700 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-amber-300 text-sm"><i class="fa-solid fa-book-bookmark mr-1.5"></i>2. 二樓取書一樓櫃台借書 & 逾期續借考核（任務三）</span>
+                        <span id="counter-task3-badge" class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">待辦理</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                            <label class="block text-slate-300 font-bold mb-1">Q1：若想延長借期辦理「續借」，應於何時辦理？續借期多久？</label>
+                            <select id="quiz-renew" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                                <option value="">-- 請選擇正確規定 --</option>
+                                <option value="wrong1">逾期後 3 日內辦理，續借期 1 週</option>
+                                <option value="correct">到期日前 1~2 日到館或上網辦理，續借期為 2 週</option>
+                                <option value="wrong2">隨時皆可無限次續借，每次 1 個月</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-slate-300 font-bold mb-1">Q2：小明借了 3 本書，分別逾期 2 天、3 天、1 天才歸還，請問累計暫停借閱權限幾天？</label>
+                            <select id="quiz-overdue" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                                <option value="">-- 累計每本書逾期天數為暫停天數 --</option>
+                                <option value="3">3 天（取最高天數）</option>
+                                <option value="6">6 天（2+3+1 累計每本書逾期天數）</option>
+                                <option value="14">14 天（固定兩週）</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button onclick="processCheckoutAtCounter()" class="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black transition">
+                        <i class="fa-solid fa-barcode mr-1"></i> 出示學生證掃描借書籃館藏 & 提交續借逾期審核
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. 1F 梅高特藏區與報架解密彈窗 (任務四) -->
+    <div id="archive-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-xl w-full rounded-3xl p-6 border border-purple-400/60">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-vault text-purple-400 text-2xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">1F 東北角：梅高特藏區研究保險箱</h3>
+                        <p class="text-xs text-slate-400">陳列《梅岡風》、最近幾屆畢業紀念冊、《梅高青年》等刊物（不開放外借）</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('archive-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="my-4 space-y-3 text-xs">
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                        <div class="font-bold text-purple-300">線索 A：特藏展櫃</div>
+                        <div id="clue-a-status" class="text-slate-400 mt-1">請翻閱特藏區刊物</div>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                        <div class="font-bold text-sky-300">線索 B：西側報架</div>
+                        <div id="clue-b-status" class="text-slate-400 mt-1">請先去1F西側報架查閱報紙保存規定</div>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                        <div class="font-bold text-emerald-300">線索 C：中午新聞</div>
+                        <div id="clue-c-status" class="text-slate-400 mt-1">1F 中午播放幾分鐘新聞？</div>
+                    </div>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-slate-900/90 border border-purple-500/40 space-y-2.5">
+                    <div>
+                        <label class="block text-slate-200 font-bold mb-1">1. 梅高特藏區陳列《梅岡風》、畢業紀念冊、《梅高青年》，借閱規定為何？</label>
+                        <select id="archive-q1" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                            <option value="">-- 請選擇 --</option>
+                            <option value="no">僅供館內檢閱，不開放外借（代號：0）</option>
+                            <option value="yes">可外借 2 週（代號：2）</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-200 font-bold mb-1">2. 一樓西側報架陳列當日報紙，圖書館至少保存最近幾週內之報紙供查閱？</label>
+                        <select id="archive-q2" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                            <option value="">-- 請選擇（可至西側報架查看） --</option>
+                            <option value="1">最近一週（代號：1）</option>
+                            <option value="2">最近二週內（代號：2）</option>
+                            <option value="4">最近四週內（代號：4）</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-200 font-bold mb-1">3. 一樓平時播放公播音樂，中午播放幾分鐘新聞（每天不同頻道）？</label>
+                        <select id="archive-q3" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                            <option value="">-- 請選擇 --</option>
+                            <option value="15">15 分鐘</option>
+                            <option value="25">25 分鐘</option>
+                            <option value="50">50 分鐘</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-400">解開後可取得任務五所需之【專題研究原稿】</span>
+                <button onclick="unlockArchiveSafe()" class="px-5 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-black text-xs">
+                    <i class="fa-solid fa-key mr-1"></i> 解鎖特藏室保險箱
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. 1F 東側事務機器（悠遊卡影印/列印/掃描精算）彈窗 (任務五) -->
+    <div id="machine-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-xl w-full rounded-3xl p-6 border border-emerald-400/60">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-print text-emerald-400 text-2xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">1F 東側：多功能事務機器（影印/列印/掃描）</h3>
+                        <p class="text-xs text-slate-400">規定：請自備悠遊卡（餘額須 10 元以上），圖書館不外借影印卡。</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('machine-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="my-4 space-y-3 text-xs">
+                <!-- 悠遊卡感應與儲值區 -->
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <div class="text-slate-400">目前悠遊卡狀態：</div>
+                        <div class="text-sm font-black text-sky-400 mt-0.5">
+                            餘額：<span id="machine-card-balance" class="mono-font">$5</span> 元
+                            <span id="machine-card-tapped" class="ml-2 px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[11px]">尚未靠卡感應</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="topUpEasyCard()" class="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-300 font-bold">
+                            <i class="fa-solid fa-coins mr-1"></i>儲值 +$10 元
+                        </button>
+                        <button onclick="tapEasyCardOnMachine()" class="px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black">
+                            <i class="fa-solid fa-wifi mr-1"></i>靠卡感應悠遊卡
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 任務五需求說明 -->
+                <div class="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-200">
+                    <b>實作任務需求：</b>請將剛才從特藏區取得的【專題研究原稿】執行以下三項作業：<br>
+                    ① <b>掃描 2 頁</b>（掃描只需過卡，無需付費 $0）<br>
+                    ② <b>黑白列印 2 頁</b>（每頁 2 元，共 $4）<br>
+                    ③ <b>彩色影印 1 頁</b>（每頁 6 元，共 $6）
+                </div>
+
+                <!-- 機台操作按鈕 -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="runMachineJob('scan')" id="job-btn-scan" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-center transition">
+                        <i class="fa-solid fa-file-Waveform text-sky-400 text-lg mb-1"></i>
+                        <div class="font-bold text-white">1. 執行掃描 (2頁)</div>
+                        <div class="text-[11px] text-emerald-400">過卡免費 $0</div>
+                    </button>
+                    <button onclick="runMachineJob('bw')" id="job-btn-bw" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-center transition">
+                        <i class="fa-solid fa-print text-slate-200 text-lg mb-1"></i>
+                        <div class="font-bold text-white">2. 黑白列印 (2頁)</div>
+                        <div class="text-[11px] text-amber-300">$2/頁 × 2 = $4</div>
+                    </button>
+                    <button onclick="runMachineJob('color')" id="job-btn-color" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-center transition">
+                        <i class="fa-solid fa-palette text-pink-400 text-lg mb-1"></i>
+                        <div class="font-bold text-white">3. 彩色影印 (1頁)</div>
+                        <div class="text-[11px] text-amber-300">$6/頁 × 1 = $6</div>
+                    </button>
+                </div>
+
+                <div id="machine-log" class="p-2.5 rounded-xl bg-slate-950 font-mono text-slate-300 border border-slate-800">
+                    [系統待命] 請先確保悠遊卡餘額達 10 元以上並點擊「靠卡感應悠遊卡」...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 7. 1F 討論室/展示螢幕：空間借用審核與跨棟場館終極考驗彈窗 (任務六) -->
+    <div id="final-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-2xl w-full rounded-3xl p-6 border border-amber-400/60 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-chalkboard-user text-amber-400 text-2xl"></i>
+                    <div>
+                        <h3 class="text-lg font-black text-white">任務六：空間借用審核與跨棟場館終極考驗</h3>
+                        <p class="text-xs text-slate-400">1F 討論室 / 展示螢幕互動終端機</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('final-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="my-4 space-y-3 text-xs">
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <label class="block font-bold text-amber-300 mb-1.5">1. 【空間申請單 A】熱舞社與畢聯會申請借用 1F 討論室與閱讀區「製作海報、製作畢業紀念冊」，請問是否核准？</label>
+                    <select id="final-q1" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                        <option value="">-- 請依規定裁決 --</option>
+                        <option value="approve">核准借用，只要保持安靜即可</option>
+                        <option value="reject">予以駁回！圖書館所有區域不外借製作海報、製作畢業紀念冊等非閱讀之活動</option>
+                    </select>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <label class="block font-bold text-sky-300 mb-1.5">2. 【空間申請單 B】高一班級想申請「班級借用圖書館」，下列哪一項符合規定（Q05）？</label>
+                    <select id="final-q2" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                        <option value="">-- 請選擇正確班級借用規則 --</option>
+                        <option value="correct">需經導師同意，由班長或圖書股長提前預約，同一時段以一班為原則（教師借用優先於班級借用）</option>
+                        <option value="wrong1">班級借用優先於教師借用，無須提前預約</option>
+                        <option value="wrong2">同一時段可容納五個班級同時上課</option>
+                    </select>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <label class="block font-bold text-emerald-300 mb-1.5">3. 【午休與打掃時段規定】關於中午午休與打掃時間，下列敘述何者正確（Q10）？</label>
+                    <select id="final-q3" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                        <option value="">-- 請選擇 --</option>
+                        <option value="wrong1">不想睡午覺可自由入館，圖書館會開立消除缺曠紀錄證明</option>
+                        <option value="correct">午休無特殊原因請回教室休息；若有急事須備有導師同意文件，且圖書館不會發給到館和消除缺曠紀錄之任何證明</option>
+                    </select>
+                </div>
+
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <label class="block font-bold text-purple-300 mb-1.5">4. 【跨棟藝文空間拼圖】除圖書館本館 1F、2F 外，「啟明樓」一樓與四樓分別為何種空間？</label>
+                    <select id="final-q4" class="w-full bg-slate-800 text-white rounded-lg p-2 border border-slate-600">
+                        <option value="">-- 請選擇 --</option>
+                        <option value="correct">啟明樓一樓為「喜閱學堂」、四樓為「紅土藝術空間」</option>
+                        <option value="wrong1">啟明樓一樓為「紅土藝術空間」、四樓為「梅高特藏室」</option>
+                    </select>
+                </div>
+            </div>
+
+            <button onclick="submitFinalExam()" class="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 text-slate-950 font-black text-sm shadow-lg">
+                <i class="fa-solid fa-award mr-1"></i> 提交終極審核並領取「梅高圖書榮譽證書」
+            </button>
+        </div>
+    </div>
+
+    <!-- 8. 全景平面配置圖與快速導航彈窗 -->
+    <div id="fullmap-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-4xl w-full rounded-3xl p-6 border border-sky-400/60 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <div>
+                    <h3 class="text-lg font-black text-white"><i class="fa-solid fa-map-location-dot text-sky-400 mr-2"></i>楊梅高中圖書館 1F & 2F 空間配置導航圖</h3>
+                    <p class="text-xs text-slate-400">點擊下方任一區域按鈕，可直接將角色傳送至該 3D 設施前方</p>
+                </div>
+                <button onclick="closeModal('fullmap-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-4 text-xs">
+                <!-- 1F 快速導航區 -->
+                <div class="p-4 rounded-2xl bg-slate-900 border border-sky-500/30">
+                    <div class="font-black text-sky-400 text-sm mb-2">【圖書館 1F 空間配置】</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="teleportTo(1, 0, 22, '1F 大門入口')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">📍 南側中央：大門 (RFID門)</button>
+                        <button onclick="teleportTo(1, -30, 17, '1F 西南角置物櫃')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🔒 西南角：置物櫃 (存書包/水)</button>
+                        <button onclick="teleportTo(1, -14, 17, '1F 新書展示區')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">📗 南側偏左：新書展示區</button>
+                        <button onclick="teleportTo(1, -14, 9, '1F 曬書桌')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">📖 中左南：三排曬書桌</button>
+                        <button onclick="teleportTo(1, -14, 2, '1F 雜誌區')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">📰 中左中：雜誌區 (當月期刊)</button>
+                        <button onclick="teleportTo(1, -30, 2, '1F 西側報架')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🗞️ 西側靠牆：報架 (二週內報紙)</button>
+                        <button onclick="teleportTo(1, -28, -11, '1F 平板車與SDGs專區')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🌍 西北側：平板車 & SDGs專區</button>
+                        <button onclick="teleportTo(1, -14, -18, '1F 討論室')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🖥️ 最北側：討論室 (含西側螢幕)</button>
+                        <button onclick="teleportTo(1, 5, 12, '1F 借還書櫃台')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🪪 中央偏東南：借還書櫃台</button>
+                        <button onclick="teleportTo(1, 18, 2, '1F 資訊檢索區')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">💻 東側中央：資訊檢索區 (6台PC)</button>
+                        <button onclick="teleportTo(1, 31, -2, '1F 事務機器')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🖨️ 東側靠牆：事務機器 (悠遊卡)</button>
+                        <button onclick="teleportTo(1, 28, -14, '1F 梅高特藏區')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">🏛️ 東北角：梅高特藏區</button>
+                        <button onclick="teleportTo(1, 14, -18, '1F 展示螢幕')" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-500/30 text-left border border-slate-700">📺 東北北側：展示螢幕 & 閱讀區</button>
+                        <button onclick="teleportTo(1, 28, 19, '1F 往2F樓梯口')" class="p-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/40 text-left border border-sky-400 text-sky-300 font-bold">🪜 東南角：往 2F 樓梯</button>
+                    </div>
+                </div>
+
+                <!-- 2F 快速導航區 -->
+                <div class="p-4 rounded-2xl bg-slate-900 border border-amber-500/30">
+                    <div class="font-black text-amber-400 text-sm mb-2">【圖書館 2F 空間配置】</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="teleportTo(2, 26, 16, '2F 樓梯口')" class="p-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/40 text-left border border-amber-400 text-amber-300 font-bold">🪜 東南角：往 1F 樓梯 & 儲物室</button>
+                        <button onclick="teleportTo(2, -20, -6, '2F 書架第1~3排 (過期雜誌/圖書)')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">📚 北側左：第1~3排書架 (含過期雜誌)</button>
+                        <button onclick="teleportTo(2, -4, -6, '2F 書架第4~6排 (含漫畫區)')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">📚 北側中：第4~6排書架 (含漫畫區)</button>
+                        <button onclick="teleportTo(2, 14, -6, '2F 書架第7~10排 (含DVD影音)')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">💿 北側右：第7~10排書架 (含DVD區)</button>
+                        <button onclick="teleportTo(2, 0, -21, '2F 北側靠牆閱讀座位')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">🪑 最北側：長條閱讀座位</button>
+                        <button onclick="teleportTo(2, -31, -19, '2F 西北討論室')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">🚪 左上與右上：2F 東西側討論室</button>
+                        <button onclick="teleportTo(2, -4, 10, '2F 大型閱讀區')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">📖 南側中央：大型閱讀區 (六排長桌)</button>
+                        <button onclick="teleportTo(2, 18, 10, '2F 閱讀區東側螢幕')" class="p-2 rounded-lg bg-slate-800 hover:bg-amber-500/30 text-left border border-slate-700">🖥️ 南側偏東：2F 大型直立螢幕</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 9. 新生利用教育完整說明手冊彈窗 -->
+    <div id="manual-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="hud-panel max-w-3xl w-full rounded-3xl p-6 border border-sky-400/50 max-h-[88vh] overflow-y-auto text-xs space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                <h3 class="text-lg font-black text-amber-300"><i class="fa-solid fa-book mr-2"></i>115學年楊梅高中圖書館新生利用教育重點速查</h3>
+                <button onclick="closeModal('manual-modal')" class="text-slate-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-slate-200 leading-relaxed">
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <div class="font-bold text-sky-400 mb-1">一、環境導覽與開放時間</div>
+                    <p>• <b>1F</b>：辦公區、讀者服務櫃台、期刊區、資訊檢索區、梅高特藏區、討論室、閱讀區。</p>
+                    <p>• <b>2F</b>：書庫（10排書架）和閱讀區。</p>
+                    <p>• <b>啟明樓</b>：一樓為「喜閱學堂」、四樓為「紅土藝術空間」。</p>
+                    <p>• <b>開放時間</b>：08:00~16:00。第8堂為館務處理時間（未上輔導課同學可入館自習）。打掃時間不得入館（例外需導師同意）。</p>
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <div class="font-bold text-amber-400 mb-1">二、圖書借還與續借規則</div>
+                    <p>• <b>跨樓層流程</b>：由 1F 進入 -> 至 2F 書庫找書/取書 -> 至 1F 櫃台完成借書程序。</p>
+                    <p>• <b>借書</b>：攜學生證，每人最多借 <b>4 本</b>，借期 <b>2 週</b>（16:00前完成）。</p>
+                    <p>• <b>續借</b>：到期日前 1~2 日到館或系統辦理，續借期 <b>2 週</b>。</p>
+                    <p>• <b>逾期</b>：暫停借閱權利，累計每本書逾期天數為暫停借閱天數。</p>
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <div class="font-bold text-emerald-400 mb-1">三、館藏權限與事務機器收費</div>
+                    <p>• <b>期刊與漫畫</b>：1F 當月期刊、2F 漫畫限館內閱讀不外借；<b>過期雜誌移置 2F 書庫可供外借</b>。</p>
+                    <p>• <b>特藏與DVD</b>：梅高特藏區（梅岡風、畢冊、梅高青年）不外借。公播版DVD限教職員借用；學生可借家用版DVD（勿公播）。</p>
+                    <p>• <b>事務機器</b>：自備悠遊卡（餘額 10 元以上），黑白影印/列印每頁 <b>2 元</b>、彩色每頁 <b>6 元</b>；<b>掃描只需過卡無需付費</b>。</p>
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-700">
+                    <div class="font-bold text-rose-400 mb-1">四、入館秩序與空間借用</div>
+                    <p>• 嚴禁攜帶飲食（含礦泉水）、書包入館（可帶自己的書）。館內禁用手機、禁奔跑喧嘩或把椅子當玩樂工具。</p>
+                    <p>• <b>不外借活動</b>：所有區域不外借製作海報、製作畢業紀念冊等非閱讀活動。</p>
+                    <p>• <b>午休規定</b>：無特殊原因請回教室休息；急事需導師同意文件，圖書館不發給到館和消除缺曠證明。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 10. 榮譽通關證書彈窗 -->
+    <div id="victory-modal" class="hidden fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-lg flex items-center justify-center p-4">
+        <div class="hud-panel-amber max-w-xl w-full rounded-3xl p-8 text-center border-2 border-amber-400 shadow-2xl">
+            <div class="w-20 h-20 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center text-4xl mx-auto mb-4 shadow-lg shadow-amber-400/40">
+                <i class="fa-solid fa-trophy"></i>
+            </div>
+            <div class="text-xs font-bold tracking-widest text-amber-300 uppercase">YANGMEI SENIOR HIGH SCHOOL LIBRARY</div>
+            <h2 class="text-3xl font-black text-white mt-1 mb-2">梅高圖書館實境特訓・榮譽結業證書</h2>
+            <p class="text-sm text-slate-300 mb-6">
+                恭喜你成功穿越 1F 與 2F 所有空間考驗，精準掌握《115學年新生利用教育》全部核心規定！
+            </p>
+            <div class="grid grid-cols-3 gap-3 mb-6 text-xs">
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-amber-400/30">
+                    <div class="text-slate-400">最終守規值</div>
+                    <div id="final-score-display" class="text-2xl font-black text-emerald-400 mt-1">100</div>
+                </div>
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-amber-400/30">
+                    <div class="text-slate-400">完成連鎖任務</div>
+                    <div class="text-2xl font-black text-sky-400 mt-1">6 / 6</div>
+                </div>
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-amber-400/30">
+                    <div class="text-slate-400">悠遊卡精算</div>
+                    <div class="text-2xl font-black text-amber-400 mt-1">完美達標</div>
+                </div>
+            </div>
+            <button onclick="closeModal('victory-modal')" class="px-8 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-sm">
+                繼續在 3D 圖書館自由探索
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /**************************************************************************
+         * 1. WEB AUDIO API 擬真音效合成器 (無須外部音檔，確保100%穩定發聲)
+         **************************************************************************/
+        let audioCtx = null;
+        let isMuted = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextClass) audioCtx = new AudioContextClass();
+            }
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('mute-btn');
+            btn.innerHTML = isMuted ? '<i class="fa-solid fa-volume-xmark text-rose-400"></i>' : '<i class="fa-solid fa-volume-high text-sky-400"></i>';
+            showToast(isMuted ? '已關閉環境與互動音效' : '已開啟環境與互動音效', 'info');
+        }
+
+        function playSound(type) {
+            if (isMuted) return;
+            initAudio();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+            if (type === 'step') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(95, now);
+                osc.frequency.exponentialRampToValueAtTime(42, now + 0.06);
+                gain.gain.setValueAtTime(0.06, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.06);
+            } else if (type === 'beep') {
+                // 悠遊卡「嗶」聲
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1950, now);
+                gain.gain.setValueAtTime(0.18, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.16);
+            } else if (type === 'alarm') {
+                // RFID 警報蜂鳴
+                for (let i = 0; i < 3; i++) {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(880, now + i * 0.22);
+                    osc.frequency.setValueAtTime(620, now + i * 0.22 + 0.1);
+                    gain.gain.setValueAtTime(0.2, now + i * 0.22);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.22 + 0.2);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now + i * 0.22);
+                    osc.stop(now + i * 0.22 + 0.2);
+                }
+            } else if (type === 'success') {
+                const freqs = [523.25, 659.25, 783.99, 1046.5];
+                freqs.forEach((f, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(f, now + idx * 0.08);
+                    gain.gain.setValueAtTime(0.16, now + idx * 0.08);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now + idx * 0.08);
+                    osc.stop(now + idx * 0.08 + 0.25);
+                });
+            } else if (type === 'click') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(720, now);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.05);
+            }
+        }
+
+        /**************************************************************************
+         * 2. 遊戲核心狀態 (Game State & Inventory & Quests)
+         **************************************************************************/
+        const gameState = {
+            currentFloor: 1,
+            minimapFloor: 1,
+            timeSlot: 'normal', // normal(上課時間), open, noon, cleaning, period8
+            complianceScore: 100,
+            easyCardBalance: 5,
+            easyCardTapped: false,
+            isSprinting: false,
+            phoneSilenced: false,
+            passedGateCheck: false,
+            checkedNewspaperRack: false,
+            hasResearchDraft: false,
+
+            // 隨身物品狀態 (storedInLocker: true 代表已存入1F左下角置物櫃)
+            inventory: [
+                { id: 'backpack', name: '個人書包', icon: 'fa-briefcase', storedInLocker: false, prohibitedInLib: true, desc: '違規物品：入館前須存入1F左下角置物櫃' },
+                { id: 'water', name: '礦泉水', icon: 'fa-bottle-water', storedInLocker: false, prohibitedInLib: true, desc: '違規物品：不可攜帶飲食(含礦泉水)入館' },
+                { id: 'student_id', name: '學生證', icon: 'fa-id-card', storedInLocker: false, prohibitedInLib: false, desc: '必備證件：入館登記與一樓櫃台借書必備' },
+                { id: 'pass_permit', name: '導師洽公證明', icon: 'fa-file-signature', storedInLocker: false, prohibitedInLib: false, desc: '上課時間或午休急事入館須備有教師同意證明' },
+                { id: 'easycard', name: '悠遊卡', icon: 'fa-credit-card', storedInLocker: false, prohibitedInLib: false, desc: '事務機器影印/列印/掃描使用(餘額須10元以上)' },
+                { id: 'own_book', name: '自習參考書', icon: 'fa-book-open-reader', storedInLocker: false, prohibitedInLib: false, desc: '合規物品：可帶自己的書籍進入圖書館閱讀' }
+            ],
+            activeItemId: 'student_id',
+
+            // 借書籃與館藏清單
+            basket: [],
+
+            // 任務二 OPAC 與新書推薦步驟
+            opacUserSteps: [],
+            opacDone: false,
+            recUserSteps: [],
+            recDone: false,
+
+            // 任務五 事務機器作業進度
+            machineJobs: { scan: false, bw: false, color: false },
+
+            // 六大連鎖任務狀態
+            quests: [
+                {
+                    id: 1,
+                    title: '任務一：入館安檢與違規排除',
+                    done: false,
+                    targetFloor: 1,
+                    targetX: -30,
+                    targetZ: 17,
+                    hint: '先去 1F 西南角「置物櫃」存入書包與礦泉水、將左下角「手機」調為靜音，再到「1F 借還書櫃台」出示學生證與洽公證明完成登記。'
+                },
+                {
+                    id: 2,
+                    title: '任務二：OPAC 檢索與新書推薦',
+                    done: false,
+                    targetFloor: 1,
+                    targetX: 18,
+                    targetZ: 2,
+                    hint: '前往 1F 東側「資訊檢索區」操作電腦，完成「館藏圖書查詢 5 步驟」與「新書推薦 5 步驟」（切勿點擊不當釣魚網站！）。'
+                },
+                {
+                    id: 3,
+                    title: '任務三：跨樓層尋書與借閱陷阱',
+                    done: false,
+                    targetFloor: 2,
+                    targetX: -12,
+                    targetZ: -6,
+                    hint: '由東南角樓梯上 2F 書庫，挑選「3 本一般圖書 + 1 本過期雜誌 + 1 張家用版 DVD」（避開當月期刊、漫畫、公播DVD），再回 1F 借還書櫃台辦理。'
+                },
+                {
+                    id: 4,
+                    title: '任務四：梅高特藏與報紙時光機',
+                    done: false,
+                    targetFloor: 1,
+                    targetX: 28,
+                    targetZ: -14,
+                    hint: '先查看 1F 西側「報架」保存規定，再進入 1F 東北角「梅高特藏區」解開研究保險箱，取得【專題研究原稿】。'
+                },
+                {
+                    id: 5,
+                    title: '任務五：事務機器悠遊卡精算',
+                    done: false,
+                    targetFloor: 1,
+                    targetX: 31,
+                    targetZ: -2,
+                    hint: '前往 1F 東側靠牆「事務機器」，先將悠遊卡儲值至 10 元以上並靠卡感應，依序完成：掃描 2 頁($0)、黑白列印 2 頁($4)、彩色影印 1 頁($6)。'
+                },
+                {
+                    id: 6,
+                    title: '任務六：空間借用與跨棟終極考驗',
+                    done: false,
+                    targetFloor: 1,
+                    targetX: -14,
+                    targetZ: -18,
+                    hint: '前往 1F 北側「討論室」或「展示螢幕」，駁回海報/畢冊製作申請、審核班級借用規則，並完成啟明樓空間問答！'
+                }
+            ]
+        };
+
+        /**************************************************************************
+         * 3. 3D 空間建模與樓層配置 (精確還原 1F 與 2F 配置圖)
+         * 座標系：X 軸 [-36, +36] (西至東)，Z 軸 [-24, +24] (北至南)
+         **************************************************************************/
+        let scene, camera, renderer;
+        let floor1Group, floor2Group;
+        let interactableMeshes = []; // 儲存所有可互動 3D 物件
+        let colliders1F = [], colliders2F = []; // 碰撞盒
+        let hoveredObject = null;
+
+        // 玩家第一人稱控制器狀態
+        const player = {
+            x: 0,
+            y: 1.7,
+            z: 22.5, // 初始位於 1F 南側中央大門處
+            yaw: 0,   // 面向北側 (0 rad = -Z)
+            pitch: 0,
+            radius: 0.65
+        };
+
+        const moveKeys = { forward: false, backward: false, left: false, right: false };
+        let stepTimer = 0;
+
+        // 建立帶有高解析度繁體中文標示的 3D 立體牌材質
+        function createLabelTexture(title, subtitle, bgColor = '#0f172a', borderColor = '#38bdf8', textColor = '#ffffff') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 192;
+            const ctx = canvas.getContext('2d');
+
+            // 背景與外框
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 10;
+            ctx.strokeStyle = borderColor;
+            ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
+
+            // 主標題
+            ctx.fillStyle = textColor;
+            ctx.font = '900 44px "Noto Sans TC", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(title, canvas.width / 2, subtitle ? 72 : 96);
+
+            // 副標題
+            if (subtitle) {
+                ctx.fillStyle = '#fde047';
+                ctx.font = '700 26px "Noto Sans TC", sans-serif';
+                ctx.fillText(subtitle, canvas.width / 2, 134);
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.needsUpdate = true;
+            return tex;
+        }
+
+        // 建立懸浮在設施上方的雙面標示牌
+        function createFloatingSign(title, subtitle, x, y, z, colorHex = '#38bdf8', scaleW = 4.2, scaleH = 1.5) {
+            const tex = createLabelTexture(title, subtitle, '#0f172a', colorHex);
+            const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+            const geo = new THREE.PlaneGeometry(scaleW, scaleH);
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            return mesh;
+        }
+
+        // 通用家具/分區長方體生成工具（支援碰撞與互動註冊）
+        function createZoneBlock(group, colliders, opts) {
+            const {
+                x, y, z, w, h, d,
+                color = 0x334155,
+                opacity = 1.0,
+                name = '',
+                subText = '',
+                signHeight = null,
+                signColor = '#38bdf8',
+                interactType = null,
+                interactData = null,
+                solid = true
+            } = opts;
+
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const mat = new THREE.MeshStandardMaterial({
+                color,
+                roughness: 0.45,
+                metalness: 0.15,
+                transparent: opacity < 1.0,
+                opacity
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y + h / 2, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            group.add(mesh);
+
+            // 邊框線條增強立體空間辨識度
+            const edges = new THREE.EdgesGeometry(geo);
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 }));
+            mesh.add(line);
+
+            if (solid) {
+                colliders.push({
+                    minX: x - w / 2,
+                    maxX: x + w / 2,
+                    minZ: z - d / 2,
+                    maxZ: z + d / 2
+                });
+            }
+
+            if (name && signHeight !== null) {
+                const sign = createFloatingSign(name, subText, x, signHeight, z, signColor);
+                group.add(sign);
+                if (interactType) {
+                    sign.userData = { interactType, name, subText, interactData, floor: group === floor1Group ? 1 : 2 };
+                    interactableMeshes.push(sign);
+                }
+            }
+
+            if (interactType) {
+                mesh.userData = { interactType, name, subText, interactData, floor: group === floor1Group ? 1 : 2 };
+                interactableMeshes.push(mesh);
+            }
+
+            return mesh;
+        }
+
+        function initThreeWorld() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0b1324);
+            scene.fog = new THREE.FogExp2(0x0b1324, 0.012);
+
+            camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 160);
+            camera.rotation.order = 'YXZ';
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // 光源配置
+            const ambient = new THREE.AmbientLight(0xe2e8f0, 0.78);
+            scene.add(ambient);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.65);
+            dirLight.position.set(20, 45, 25);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            const pointLight1 = new THREE.PointLight(0x38bdf8, 0.5, 50);
+            pointLight1.position.set(-15, 7, 0);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xfbbf24, 0.45, 50);
+            pointLight2.position.set(18, 7, 0);
+            scene.add(pointLight2);
+
+            floor1Group = new THREE.Group();
+            floor2Group = new THREE.Group();
+            scene.add(floor1Group);
+            scene.add(floor2Group);
+
+            buildFloor1();
+            buildFloor2();
+            floor2Group.visible = false;
+        }
+
+        // 建立外牆與地板通用基底
+        function buildRoomShell(group, colliders, floorColor) {
+            // 地板 (72m x 48m)
+            const floorGeo = new THREE.PlaneGeometry(72, 48);
+            const floorMat = new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.7 });
+            const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.receiveShadow = true;
+            group.add(floorMesh);
+
+            // 地板格線輔助空間感
+            const grid = new THREE.GridHelper(72, 36, 0x38bdf8, 0x1e293b);
+            grid.position.y = 0.02;
+            group.add(grid);
+
+            // 四周外牆
+            createZoneBlock(group, colliders, { x: 0, y: 0, z: -24, w: 72, h: 7, d: 0.8, color: 0x1e293b }); // 北牆
+            createZoneBlock(group, colliders, { x: 0, y: 0, z: 24, w: 72, h: 7, d: 0.8, color: 0x1e293b });  // 南牆
+            createZoneBlock(group, colliders, { x: -36, y: 0, z: 0, w: 0.8, h: 7, d: 48, color: 0x1e293b }); // 西牆
+            createZoneBlock(group, colliders, { x: 36, y: 0, z: 0, w: 0.8, h: 7, d: 48, color: 0x1e293b });  // 東牆
+        }
+
+        // ==================== 精確建立 1F 空間配置 ====================
+        function buildFloor1() {
+            buildRoomShell(floor1Group, colliders1F, 0x17253b);
+
+            // 1. 南側中央：大門與 RFID 防盜安全門 (x: 0, z: 21.5)
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -2.2, y: 0, z: 20.5, w: 0.35, h: 2.8, d: 1.2, color: 0x0284c7,
+                name: '1F 大門 (RFID安全門)', subText: '禁止攜帶書包/礦泉水/未借圖書闖入', signHeight: 3.8, signColor: '#38bdf8',
+                interactType: 'gate_info', solid: false
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 2.2, y: 0, z: 20.5, w: 0.35, h: 2.8, d: 1.2, color: 0x0284c7, solid: false
+            });
+
+            // 2. 西南角（左下方）：置物櫃 (x: -33, z: 18.5)
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -33, y: 0, z: 18.5, w: 3.5, h: 2.6, d: 7, color: 0x0ea5e9,
+                name: '置物櫃 (西南角)', subText: '[點擊/按E] 存放書包與礦泉水', signHeight: 3.6, signColor: '#38bdf8',
+                interactType: 'locker'
+            });
+
+            // 公佈欄 (西南橫向隔牆) & 新書展示區
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -23, y: 0, z: 14.5, w: 10, h: 2.2, d: 0.4, color: 0x475569,
+                name: '公佈欄', subText: '最新藝文與圖書活動公告', signHeight: 3.1, signColor: '#94a3b8',
+                interactType: 'notice_board'
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -11, y: 0, z: 17.5, w: 11, h: 1.2, d: 4, color: 0x10b981,
+                name: '新書展示區', subText: '展示本館最新採購到館圖書', signHeight: 2.8, signColor: '#34d399',
+                interactType: 'new_books'
+            });
+
+            // 3. 西側靠牆（由南至北）：閱讀桌 -> 報架 -> 閱讀桌 -> 平板車
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -33, y: 0, z: 9.5, w: 3.2, h: 1.0, d: 8, color: 0x64748b,
+                name: '西側閱讀桌', subText: '可帶自己的書入館閱讀', signHeight: 2.6, signColor: '#cbd5e1',
+                interactType: 'chair_rule'
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -33, y: 0, z: 2.0, w: 2.4, h: 1.8, d: 4.2, color: 0xf59e0b,
+                name: '報架 (西側靠牆)', subText: '[任務四線索] 陳列當日與最近二週內報紙', signHeight: 3.3, signColor: '#fbbf24',
+                interactType: 'newspaper_rack'
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -33, y: 0, z: -6.5, w: 3.2, h: 1.0, d: 9, color: 0x64748b
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -28.5, y: 0, z: -12.5, w: 3.0, h: 1.3, d: 2.5, color: 0x38bdf8,
+                name: '平板車', subText: '數位學習輔助載具設備', signHeight: 2.8, signColor: '#38bdf8',
+                interactType: 'tablet_cart'
+            });
+
+            // 4. 中左區域（由南至北）：三排曬書桌 -> 兩排雜誌區 -> 兩塊閱讀區 -> SDGs專區 -> 最北側討論室(含西側螢幕)
+            [11.5, 8.8, 6.1].forEach((zPos, idx) => {
+                createZoneBlock(floor1Group, colliders1F, {
+                    x: -14, y: 0, z: zPos, w: 18, h: 1.0, d: 1.6, color: 0x0d9488,
+                    name: idx === 1 ? '曬書桌 (三排)' : '', subText: idx === 1 ? '主題書展與閱讀推廣' : '', signHeight: idx === 1 ? 2.6 : null,
+                    interactType: 'book_display_table'
+                });
+            });
+
+            [2.5, -0.5].forEach((zPos, idx) => {
+                createZoneBlock(floor1Group, colliders1F, {
+                    x: -14, y: 0, z: zPos, w: 18, h: 1.4, d: 1.6, color: 0xe11d48,
+                    name: idx === 0 ? '1F 雜誌區 (兩排)' : '', subText: idx === 0 ? '[點擊檢視] 當月期刊雜誌限館內閱讀不外借' : '', signHeight: idx === 0 ? 3.1 : null, signColor: '#fb7185',
+                    interactType: 'current_magazine'
+                });
+            });
+
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -19, y: 0, z: -6.5, w: 7.5, h: 0.9, d: 5.5, color: 0x3b82f6,
+                name: '1F 閱讀區', subText: '嚴禁喧嘩與把椅子當玩樂工具', signHeight: 2.5,
+                interactType: 'chair_rule'
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -9, y: 0, z: -6.5, w: 7.5, h: 0.9, d: 5.5, color: 0x3b82f6,
+                interactType: 'chair_rule'
+            });
+
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -12, y: 0, z: -12.5, w: 25, h: 1.3, d: 2.4, color: 0x16a34a,
+                name: 'SDGs 永續發展專區', subText: '聯合國永續發展目標主題館藏', signHeight: 2.9, signColor: '#4ade80',
+                interactType: 'sdgs_zone'
+            });
+
+            // 西北最北側：討論室（含西側螢幕）
+            createZoneBlock(floor1Group, colliders1F, {
+                x: -15, y: 0, z: -19.5, w: 34, h: 2.6, d: 6.5, color: 0x4f46e5, opacity: 0.85,
+                name: '1F 討論室 (含西側螢幕)', subText: '[任務六] 空間借用審核與非閱讀活動駁回', signHeight: 3.8, signColor: '#a855f7',
+                interactType: 'final_exam'
+            });
+
+            // 5. 中央偏東南：L型「借還書櫃台」與「行政辦公室」
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 6.5, y: 0, z: 12, w: 5.5, h: 1.3, d: 11, color: 0x0284c7,
+                name: '借還書櫃台 (讀者服務櫃台)', subText: '[任務一&三] 入館登記 / 一樓櫃台借還書 / 續借逾期', signHeight: 3.5, signColor: '#38bdf8',
+                interactType: 'service_counter'
+            });
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 21, y: 0, z: 12, w: 22, h: 3.2, d: 11, color: 0x334155,
+                name: '行政辦公室', subText: '館務處理與RFID監控中樞', signHeight: 4.2, signColor: '#94a3b8',
+                interactType: 'admin_office'
+            });
+
+            // 6. 東側中央：資訊檢索區 (6台電腦並排) & 事務機器
+            for (let i = 0; i < 6; i++) {
+                const cx = 11 + i * 3.6;
+                createZoneBlock(floor1Group, colliders1F, {
+                    x: cx, y: 0, z: 3.2, w: 2.4, h: 1.4, d: 2.2, color: 0x0ea5e9,
+                    name: i === 2 ? '資訊檢索區 (6台電腦)' : '',
+                    subText: i === 2 ? '[任務二] 點擊操作 OPAC 館藏查詢與新書推薦' : '',
+                    signHeight: i === 2 ? 3.4 : null,
+                    signColor: '#38bdf8',
+                    interactType: 'computer_pc'
+                });
+            }
+
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 33, y: 0, z: -2.0, w: 3.5, h: 1.8, d: 3.8, color: 0x10b981,
+                name: '事務機器 (影印/列印/掃描)', subText: '[任務五] 請自備悠遊卡(餘額10元以上)靠卡操作', signHeight: 3.6, signColor: '#34d399',
+                interactType: 'office_machine'
+            });
+
+            // 7. 東北區域：6個方塊閱讀區、北側展示螢幕、最東北角「梅高特藏區」
+            const readCoords = [
+                [13, -4], [19, -4],
+                [13, -9.5], [19, -9.5],
+                [13, -15], [19, -15]
+            ];
+            readCoords.forEach(([rx, rz], idx) => {
+                createZoneBlock(floor1Group, colliders1F, {
+                    x: rx, y: 0, z: rz, w: 4.2, h: 0.9, d: 3.8, color: 0x3b82f6,
+                    name: idx === 2 ? '東北閱讀區 (6座方桌)' : '',
+                    subText: idx === 2 ? '寧靜自習空間' : '',
+                    signHeight: idx === 2 ? 2.6 : null,
+                    interactType: 'chair_rule'
+                });
+            });
+
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 16, y: 0, z: -21.5, w: 13, h: 2.8, d: 1.2, color: 0xf59e0b,
+                name: '1F 展示螢幕', subText: '[任務六] 啟明樓空間與利用教育終極考驗', signHeight: 3.8, signColor: '#fbbf24',
+                interactType: 'final_exam'
+            });
+
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 31, y: 0, z: -14, w: 7.5, h: 3.0, d: 14, color: 0x7e22ce,
+                name: '梅高特藏區 (東北角)', subText: '[任務四] 陳列梅岡風/畢冊/梅高青年 (不外借)', signHeight: 4.2, signColor: '#c084fc',
+                interactType: 'special_archive'
+            });
+
+            // 8. 東南角：公佈欄 & 往 2F 樓梯
+            createZoneBlock(floor1Group, colliders1F, {
+                x: 30, y: 0, z: 20.5, w: 9, h: 2.5, d: 4.5, color: 0xf59e0b,
+                name: '往 2F 樓梯 (東南角)', subText: '[點擊或按E] 前往二樓書庫與閱讀區', signHeight: 3.8, signColor: '#fbbf24',
+                interactType: 'stairs_to_2f'
+            });
+        }
+
+        // ==================== 精確建立 2F 空間配置 ====================
+        function buildFloor2() {
+            buildRoomShell(floor2Group, colliders2F, 0x1e293b);
+
+            // 1. 北側上半部：整排共 10 座直立長條「書架」（由左至右編號第1~10排書庫）
+            const shelfConfigs = [
+                { idx: 1, title: '第 1 排書架', sub: '總類與哲學類圖書 (可外借)', bookItem: { id: 'book_1', title: '《邏輯思維與哲學導論》', type: 'valid_book', desc: '2F 一般圖書（可外借）' }, color: 0x0284c7 },
+                { idx: 2, title: '第 2 排書架 (過期雜誌)', sub: '[任務三正確] 過期雜誌移置2F書庫供外借', bookItem: { id: 'past_mag', title: '《科學人過期雜誌合訂本》', type: 'valid_mag', desc: '2F 過期雜誌（可供外借！）' }, color: 0x10b981 },
+                { idx: 3, title: '第 3 排書架', sub: '[任務二指定] 半導體與AI科學導論 (可外借)', bookItem: { id: 'book_2', title: '《半導體與AI科學導論》', type: 'valid_book', desc: '2F 一般圖書（可外借）' }, color: 0x0ea5e9 },
+                { idx: 4, title: '第 4 排書架', sub: '自然科學類圖書', bookItem: null, color: 0x334155 },
+                { idx: 5, title: '第 5 排書架 (二樓漫畫區)', sub: '[陷阱注意] 漫畫書籍僅供在館閱讀，不開放外借！', bookItem: { id: 'trap_comic', title: '《熱門連載漫畫全集》', type: 'trap_comic', desc: '陷阱：2F 漫畫限館內閱讀，不外借！' }, color: 0xe11d48 },
+                { idx: 6, title: '第 6 排書架', sub: '[任務二指定] 台灣鐵道與楊梅地方史 (可外借)', bookItem: { id: 'book_3', title: '《台灣鐵道與楊梅地方史》', type: 'valid_book', desc: '2F 一般圖書（可外借）' }, color: 0x0ea5e9 },
+                { idx: 7, title: '第 7 排書架', sub: '世界文學類圖書', bookItem: null, color: 0x334155 },
+                { idx: 8, title: '第 8 排書架 (公播版DVD)', sub: '[陷阱注意] 公播版影音光碟限教職員工借用', bookItem: { id: 'trap_dvd_pub', title: '《國家地理紀錄片(公播版DVD)》', type: 'trap_dvd', desc: '陷阱：公播版DVD限教職員工借用！' }, color: 0xe11d48 },
+                { idx: 9, title: '第 9 排書架 (家用版DVD)', sub: '[任務三正確] 學生可借家用版DVD回家欣賞(勿公播)', bookItem: { id: 'valid_dvd_home', title: '《經典科學電影(家用版DVD)》', type: 'valid_dvd', desc: '家用版DVD（學生可外借，勿公播）' }, color: 0x10b981 },
+                { idx: 10, title: '第 10 排書架', sub: '藝術與設計類圖書', bookItem: null, color: 0x334155 }
+            ];
+
+            shelfConfigs.forEach((sc, i) => {
+                const sx = -25 + i * 5.5;
+                createZoneBlock(floor2Group, colliders2F, {
+                    x: sx, y: 0, z: -8, w: 2.6, h: 3.2, d: 14, color: sc.color,
+                    name: sc.title,
+                    subText: sc.sub,
+                    signHeight: 4.1 + (i % 2) * 0.85,
+                    signColor: sc.color === 0xe11d48 ? '#fb7185' : (sc.color === 0x10b981 ? '#34d399' : '#38bdf8'),
+                    interactType: 'shelf_2f',
+                    interactData: sc
+                });
+            });
+
+            // 2. 最北側靠牆：長條「閱讀座位」 & 左上/右上「討論室」
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 0, y: 0, z: -21.5, w: 52, h: 1.1, d: 2.2, color: 0x475569,
+                name: '2F 北側靠牆閱讀座位', subText: '個人安靜自習座位區', signHeight: 2.8,
+                interactType: 'chair_rule'
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: -32, y: 0, z: -19, w: 5.5, h: 2.8, d: 7, color: 0x4f46e5,
+                name: '2F 西北討論室', subText: '嚴禁借用製作海報或畢業紀念冊', signHeight: 3.8, signColor: '#a855f7',
+                interactType: 'final_exam'
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 32, y: 0, z: -19, w: 5.5, h: 2.8, d: 7, color: 0x4f46e5,
+                name: '2F 東北討論室', subText: '嚴禁借用製作海報或畢業紀念冊', signHeight: 3.8, signColor: '#a855f7',
+                interactType: 'final_exam'
+            });
+
+            // 3. 西側與東側靠牆：長條「閱讀桌」 & 南側靠牆左右「閱讀桌」
+            createZoneBlock(floor2Group, colliders2F, {
+                x: -33, y: 0, z: 4, w: 3.2, h: 1.0, d: 34, color: 0x64748b,
+                name: '2F 西側長條閱讀桌', subText: '靠窗閱讀區', signHeight: 2.7
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 33, y: 0, z: -2, w: 3.2, h: 1.0, d: 22, color: 0x64748b,
+                name: '2F 東側長條閱讀桌', subText: '靠窗閱讀區', signHeight: 2.7
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: -16, y: 0, z: 21.5, w: 24, h: 1.0, d: 2.2, color: 0x64748b,
+                name: '2F 南側閱讀桌', subText: '自習座位', signHeight: 2.6
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 11, y: 0, z: 21.5, w: 20, h: 1.0, d: 2.2, color: 0x64748b
+            });
+
+            // 4. 南側下半部中央：大型「閱讀區」（左右各三排長方桌） & 東側直立「螢幕」
+            [5, 10, 15].forEach((zPos, idx) => {
+                createZoneBlock(floor2Group, colliders2F, {
+                    x: -14, y: 0, z: zPos, w: 18, h: 0.95, d: 3.0, color: 0x3b82f6,
+                    name: idx === 1 ? '2F 大型閱讀區 (左三排)' : '', subText: idx === 1 ? '二樓核心自習閱覽空間' : '', signHeight: idx === 1 ? 2.7 : null,
+                    interactType: 'chair_rule'
+                });
+                createZoneBlock(floor2Group, colliders2F, {
+                    x: 6, y: 0, z: zPos, w: 18, h: 0.95, d: 3.0, color: 0x3b82f6,
+                    name: idx === 1 ? '2F 大型閱讀區 (右三排)' : '', subText: idx === 1 ? '二樓核心自習閱覽空間' : '', signHeight: idx === 1 ? 2.7 : null,
+                    interactType: 'chair_rule'
+                });
+            });
+
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 19, y: 0, z: 10, w: 1.5, h: 2.8, d: 11, color: 0x0ea5e9,
+                name: '2F 閱讀區東側螢幕', subText: '館藏導覽與數位看板', signHeight: 3.8, signColor: '#38bdf8',
+                interactType: 'final_exam'
+            });
+
+            // 5. 東南角：往 1F 樓梯 & 最右下角「儲物室」
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 26, y: 0, z: 15, w: 5.5, h: 2.5, d: 13, color: 0xf59e0b,
+                name: '往 1F 樓梯 (2F東南角)', subText: '[點擊或按E] 攜帶所選圖書下樓至1F櫃台借書', signHeight: 3.8, signColor: '#fbbf24',
+                interactType: 'stairs_to_1f'
+            });
+            createZoneBlock(floor2Group, colliders2F, {
+                x: 33, y: 0, z: 17, w: 4.2, h: 3.0, d: 10, color: 0x475569,
+                name: '2F 儲物室 (東南角)', subText: '館務器材存放空間', signHeight: 3.9, signColor: '#94a3b8',
+                interactType: 'storage_room'
+            });
+        }
+
+        /**************************************************************************
+         * 4. 玩家移動、碰撞偵測、RFID 大門監控與視角控制
+         **************************************************************************/
+        function checkCollision(nx, nz) {
+            // 邊界檢查
+            if (nx < -34.8 || nx > 34.8 || nz < -22.8 || nz > 22.8) return true;
+            const list = gameState.currentFloor === 1 ? colliders1F : colliders2F;
+            for (const c of list) {
+                if (nx + player.radius > c.minX && nx - player.radius < c.maxX &&
+                    nz + player.radius > c.minZ && nz - player.radius < c.maxZ) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function setTouchMove(dir, val) {
+            moveKeys[dir] = val;
+        }
+
+        function toggleSprintMode() {
+            gameState.isSprinting = !gameState.isSprinting;
+            const btn = document.getElementById('gait-toggle-btn');
+            const icon = document.getElementById('gait-icon');
+            const txt = document.getElementById('gait-text');
+
+            if (gameState.isSprinting) {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-rose-500/30 border border-rose-400 text-rose-200 font-bold flex items-center gap-1.5 transition';
+                icon.className = 'fa-solid fa-person-running';
+                txt.textContent = '奔跑模式 (館內違規!)';
+                penalizeCompliance(5, '館內禁止奔跑！請切換為慢步安靜行進！');
+            } else {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold flex items-center gap-1.5 transition';
+                icon.className = 'fa-solid fa-person-walking';
+                txt.textContent = '慢步安靜行進';
+                showToast('已恢復慢步安靜行進', 'info');
+            }
+        }
+
+        function togglePhoneSilence() {
+            gameState.phoneSilenced = !gameState.phoneSilenced;
+            playSound('click');
+            const btn = document.getElementById('phone-toggle-btn');
+            const txt = document.getElementById('phone-text');
+
+            if (gameState.phoneSilenced) {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-sky-500/20 border border-sky-400/50 text-sky-300 font-bold flex items-center gap-1.5 transition';
+                txt.textContent = '手機：已靜音收起';
+                showToast('已將手機調為靜音並收起（館內不得使用手機）', 'success');
+                checkQuest1Progress();
+            } else {
+                btn.className = 'px-2.5 py-1.5 rounded-lg bg-rose-500/30 border border-rose-400 text-rose-200 font-bold flex items-center gap-1.5 transition animate-pulse';
+                txt.textContent = '手機：響鈴中(違規)';
+                penalizeCompliance(5, '館內不得使用手機（教師授課所需除外）！');
+            }
+        }
+
+        function penalizeCompliance(points, reason) {
+            gameState.complianceScore = Math.max(0, gameState.complianceScore - points);
+            document.getElementById('compliance-score').textContent = gameState.complianceScore;
+            document.getElementById('compliance-bar').style.width = gameState.complianceScore + '%';
+
+            const overlay = document.getElementById('alarm-overlay');
+            overlay.classList.add('alarm-active');
+            overlay.style.opacity = '1';
+            setTimeout(() => {
+                overlay.classList.remove('alarm-active');
+                overlay.style.opacity = '0';
+            }, 1400);
+
+            playSound('alarm');
+            showToast(`【監控警報 -${points}分】${reason}`, 'danger');
+        }
+
+        // 當玩家經過 1F 大門或館內移動時的即時防呆偵測
+        let lastGateWarnTime = 0;
+        function checkGateAndRFIDRules() {
+            const now = Date.now();
+            if (now - lastGateWarnTime < 3500) return;
+
+            // 檢查是否帶著違規未借閱館藏到 1F 大門附近 (x: -4~4, z > 18)
+            if (gameState.currentFloor === 1 && Math.abs(player.x) < 4.5 && player.z > 18 && player.z < 21.5) {
+                const illegalBook = gameState.basket.find(b => b.type.startsWith('trap'));
+                if (illegalBook) {
+                    lastGateWarnTime = now;
+                    penalizeCompliance(10, `RFID 安全門警報！你夾帶了不可外借之【${illegalBook.title}】試圖通過大門！`);
+                    return;
+                }
+            }
+
+            // 檢查是否未存書包/礦泉水就深入館內北側或東側
+            if (gameState.currentFloor === 1 && player.z < 12 && player.x > -24) {
+                const bag = gameState.inventory.find(i => i.id === 'backpack');
+                const water = gameState.inventory.find(i => i.id === 'water');
+                if (!bag.storedInLocker || !water.storedInLocker) {
+                    lastGateWarnTime = now;
+                    penalizeCompliance(5, '違規攜帶書包或礦泉水入館！請先前往 1F 左下角「置物櫃」存放！');
+                }
+            }
+        }
+
+        /**************************************************************************
+         * 5. 互動系統與六大連鎖任務邏輯
+         **************************************************************************/
+        function updateRaycasterTarget() {
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const floorMeshes = interactableMeshes.filter(m => m.userData.floor === gameState.currentFloor);
+            const intersects = raycaster.intersectObjects(floorMeshes, false);
+
+            const crosshair = document.getElementById('crosshair');
+            const prompt = document.getElementById('target-prompt');
+
+            if (intersects.length > 0 && intersects[0].distance < 11) {
+                hoveredObject = intersects[0].object;
+                crosshair.classList.add('crosshair-active');
+                prompt.classList.remove('hidden');
+                document.getElementById('target-name').textContent = hoveredObject.userData.name || '圖書館設施';
+                document.getElementById('target-action').innerHTML = `<span class="px-1.5 py-0.5 bg-amber-500/20 border border-amber-400/50 rounded text-[11px] font-mono">E</span><span>${hoveredObject.userData.subText || '點擊互動'}</span>`;
+            } else {
+                hoveredObject = null;
+                crosshair.classList.remove('crosshair-active');
+                prompt.classList.add('hidden');
+            }
+        }
+
+        function interactWithCurrentTarget() {
+            if (!hoveredObject) {
+                showToast('請走近標示牌或設施（距離 10 公尺內）再按 E 或點擊互動', 'info');
+                return;
+            }
+            handleObjectInteraction(hoveredObject.userData);
+        }
+
+        function handleObjectInteraction(data) {
+            playSound('click');
+            const type = data.interactType;
+
+            if (type === 'locker') {
+                renderLockerModal();
+                openModal('locker-modal');
+            } else if (type === 'service_counter') {
+                openModal('counter-modal');
+            } else if (type === 'computer_pc') {
+                initComputerModal();
+                openModal('computer-modal');
+            } else if (type === 'current_magazine') {
+                // 1F 當月期刊陷阱測試
+                addBookToBasket({
+                    id: 'trap_mag_1f',
+                    title: '《當月最新期刊雜誌 (1F雜誌區)》',
+                    type: 'trap_mag',
+                    desc: '陷阱：一樓當月期刊雜誌不外借！過期雜誌才移置二樓書庫供外借。'
+                });
+            } else if (type === 'newspaper_rack') {
+                gameState.checkedNewspaperRack = true;
+                document.getElementById('clue-b-status').innerHTML = '<span class="text-emerald-400 font-bold">已查獲：保存最近二週內報紙 (代號2)</span>';
+                showToast('【1F 西側報架】陳列當日報紙，並至少保存「最近二週內」之報紙以供查閱！已獲得任務四線索！', 'success');
+            } else if (type === 'special_archive') {
+                document.getElementById('clue-a-status').innerHTML = '<span class="text-emerald-400 font-bold">已翻閱：梅岡風/畢冊/梅高青年不外借</span>';
+                document.getElementById('clue-c-status').innerHTML = '<span class="text-emerald-400 font-bold">廣播紀錄：中午播放 25 分鐘新聞</span>';
+                openModal('archive-modal');
+            } else if (type === 'office_machine') {
+                updateMachineModalUI();
+                openModal('machine-modal');
+            } else if (type === 'stairs_to_2f') {
+                switchFloorWithTransition(2);
+            } else if (type === 'stairs_to_1f') {
+                switchFloorWithTransition(1);
+            } else if (type === 'shelf_2f') {
+                const sc = data.interactData;
+                if (sc && sc.bookItem) {
+                    addBookToBasket(sc.bookItem);
+                } else {
+                    showToast(`【${sc.title}】${sc.sub}（任務指定書籍位於第 2、3、5、6、8、9 排）`, 'info');
+                }
+            } else if (type === 'final_exam') {
+                openModal('final-modal');
+            } else if (type === 'chair_rule') {
+                showToast('【閱覽區規範】不可大聲喧嘩、嚴禁將椅子當作玩樂工具！學生可帶自己的書籍入館閱讀。', 'info');
+            } else if (type === 'sdgs_zone') {
+                showToast('【1F SDGs 專區】展示聯合國永續發展目標主題書展，位於討論室南側。', 'info');
+            } else if (type === 'new_books') {
+                showToast('【1F 新書展示區】若想推薦圖書館購買新書，請至東側「資訊檢索區」電腦使用新書推薦系統！', 'info');
+            } else {
+                showToast(`【${data.name}】${data.subText}`, 'info');
+            }
+        }
+
+        // ==================== 任務一：置物櫃與入館登記 ====================
+        function renderLockerModal() {
+            const container = document.getElementById('locker-items-container');
+            container.innerHTML = '';
+
+            gameState.inventory.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'p-3 rounded-2xl bg-slate-900 border border-slate-700 flex items-center justify-between';
+                div.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-xl ${item.prohibitedInLib ? 'bg-rose-500/20 text-rose-400' : 'bg-sky-500/20 text-sky-400'} flex items-center justify-center text-base">
+                            <i class="fa-solid ${item.icon}"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-white">${item.name} ${item.prohibitedInLib ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/30 text-rose-300 ml-1">禁止攜入館內</span>' : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 ml-1">可攜入館內</span>'}</div>
+                            <div class="text-[11px] text-slate-400">${item.desc}</div>
+                        </div>
+                    </div>
+                    <button onclick="toggleItemLocker('${item.id}')" class="px-3 py-1.5 rounded-xl font-bold text-xs ${item.storedInLocker ? 'bg-amber-500/20 text-amber-300 border border-amber-400/50' : 'bg-sky-500 text-slate-950'}">
+                        ${item.storedInLocker ? '已鎖入置物櫃 (點擊取回)' : '隨身攜帶中 (點擊存入)'}
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function toggleItemLocker(itemId) {
+            const item = gameState.inventory.find(i => i.id === itemId);
+            if (!item) return;
+            item.storedInLocker = !item.storedInLocker;
+            playSound('click');
+            renderLockerModal();
+            renderInventoryBar();
+            checkQuest1Progress();
+        }
+
+        function checkQuest1Progress() {
+            const bagStored = gameState.inventory.find(i => i.id === 'backpack').storedInLocker;
+            const waterStored = gameState.inventory.find(i => i.id === 'water').storedInLocker;
+            const idWithPlayer = !gameState.inventory.find(i => i.id === 'student_id').storedInLocker;
+
+            if (bagStored && waterStored && gameState.phoneSilenced && idWithPlayer && gameState.passedGateCheck) {
+                if (!gameState.quests[0].done) {
+                    gameState.quests[0].done = true;
+                    playSound('success');
+                    showToast('🎉 完成【任務一：入館安檢與違規排除】！請前往 1F 東側「資訊檢索區」進行任務二。', 'success');
+                    renderQuestList();
+                }
+            }
+        }
+
+        function verifyTask1AtCounter() {
+            const bagStored = gameState.inventory.find(i => i.id === 'backpack').storedInLocker;
+            const waterStored = gameState.inventory.find(i => i.id === 'water').storedInLocker;
+            const idWithPlayer = !gameState.inventory.find(i => i.id === 'student_id').storedInLocker;
+            const permitWithPlayer = !gameState.inventory.find(i => i.id === 'pass_permit').storedInLocker;
+
+            if (!bagStored || !waterStored) {
+                penalizeCompliance(5, '你身上還帶著書包或礦泉水！請先去 1F 西南角置物櫃存放！');
+                return;
+            }
+            if (!gameState.phoneSilenced) {
+                penalizeCompliance(5, '你的手機尚未調為靜音收起！請點擊畫面左下角手機按鈕切換！');
+                return;
+            }
+            if (!idWithPlayer || !permitWithPlayer) {
+                showToast('請確保「學生證」與「導師洽公證明」沒有被鎖在置物櫃裡！', 'danger');
+                return;
+            }
+
+            gameState.passedGateCheck = true;
+            document.getElementById('counter-task1-badge').className = 'px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            document.getElementById('counter-task1-badge').textContent = '已完成入館登記';
+            checkQuest1Progress();
+            closeModal('counter-modal');
+        }
+
+        // ==================== 任務二：資訊檢索電腦 OPAC 與新書推薦 ====================
+        const correctOpacSteps = ['楊梅高中', '圖書館網頁', '館藏圖書查詢', '選擇關鍵字、ISBN等', '開始查詢'];
+        const correctRecSteps = ['楊梅高中', '圖書館網頁', '登入個人帳號', '填寫推薦內容', '圖書館審核'];
+
+        function initComputerModal() {
+            renderStepButtons('opac-step-buttons', correctOpacSteps, 'addOpacStep');
+            renderStepButtons('rec-step-buttons', correctRecSteps, 'addRecStep');
+        }
+
+        function renderStepButtons(containerId, stepsArray, fnName) {
+            const container = document.getElementById(containerId);
+            if (container.children.length > 0) return;
+            const shuffled = [...stepsArray].sort(() => Math.random() - 0.5);
+            shuffled.forEach(step => {
+                const btn = document.createElement('button');
+                btn.className = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-sky-500/30 border border-slate-600 text-xs font-bold text-white transition';
+                btn.textContent = step;
+                btn.onclick = () => window[fnName](step);
+                container.appendChild(btn);
+            });
+        }
+
+        function addOpacStep(step) {
+            playSound('click');
+            const expected = correctOpacSteps[gameState.opacUserSteps.length];
+            if (step === expected) {
+                gameState.opacUserSteps.push(step);
+                const disp = document.getElementById('opac-step-display');
+                disp.innerHTML = gameState.opacUserSteps.map((s, i) => `<span class="px-2 py-1 rounded bg-sky-500/30 border border-sky-400 text-sky-200 font-bold">${i + 1}. ${s}</span>`).join('<i class="fa-solid fa-arrow-right text-slate-500 mx-1"></i>');
+                if (gameState.opacUserSteps.length === correctOpacSteps.length) {
+                    document.getElementById('opac-search-box').classList.remove('hidden');
+                    showToast('OPAC 檢索步驟順序正確！請點擊「開始查詢」檢視館藏排架號。', 'success');
+                }
+            } else {
+                gameState.opacUserSteps = [];
+                document.getElementById('opac-step-display').innerHTML = '<span class="text-rose-400 font-bold">順序錯誤！請依《說明資料》重新點選：楊梅高中 -> 圖書館網頁 -> ...</span>';
+            }
+        }
+
+        function executeOpacSearch() {
+            playSound('beep');
+            gameState.opacDone = true;
+            document.getElementById('opac-search-result').classList.remove('hidden');
+            checkQuest2Progress();
+        }
+
+        function addRecStep(step) {
+            playSound('click');
+            const expected = correctRecSteps[gameState.recUserSteps.length];
+            if (step === expected) {
+                gameState.recUserSteps.push(step);
+                const disp = document.getElementById('rec-step-display');
+                disp.innerHTML = gameState.recUserSteps.map((s, i) => `<span class="px-2 py-1 rounded bg-emerald-500/30 border border-emerald-400 text-emerald-200 font-bold">${i + 1}. ${s}</span>`).join('<i class="fa-solid fa-arrow-right text-slate-500 mx-1"></i>');
+                if (gameState.recUserSteps.length === correctRecSteps.length) {
+                    gameState.recDone = true;
+                    document.getElementById('rec-success-msg').classList.remove('hidden');
+                    playSound('success');
+                    checkQuest2Progress();
+                }
+            } else {
+                gameState.recUserSteps = [];
+                document.getElementById('rec-step-display').innerHTML = '<span class="text-rose-400 font-bold">順序錯誤！請依 Q11 重新點選：楊梅高中 -> 圖書館網頁 -> 登入個人帳號 -> ...</span>';
+            }
+        }
+
+        function switchPcTab(tab) {
+            playSound('click');
+            ['opac', 'recommend', 'ebook'].forEach(t => {
+                document.getElementById('pc-content-' + t).classList.add('hidden');
+                document.getElementById('pc-tab-' + t).classList.remove('border-2', 'border-sky-400', 'bg-sky-500/20');
+            });
+            document.getElementById('pc-content-' + tab).classList.remove('hidden');
+            document.getElementById('pc-tab-' + tab).classList.add('border-2', 'border-sky-400', 'bg-sky-500/20');
+        }
+
+        function triggerBadWebsiteTrap() {
+            penalizeCompliance(15, '嚴重違規！資訊檢索電腦不可連線任何不當網頁，違者經查證記錄後將受校規警告以上處分！');
+        }
+
+        function checkQuest2Progress() {
+            if (gameState.opacDone && gameState.recDone && !gameState.quests[1].done) {
+                gameState.quests[1].done = true;
+                playSound('success');
+                showToast('🎉 完成【任務二：OPAC 檢索與新書推薦】！現在請從東南角樓梯上 2F 書庫找書！', 'success');
+                renderQuestList();
+            }
+        }
+
+        // ==================== 任務三：2F 書庫取書與 1F 櫃台借還審核 ====================
+        function addBookToBasket(book) {
+            if (gameState.basket.some(b => b.id === book.id)) {
+                showToast(`【${book.title}】已經在你的借書籃中了！`, 'info');
+                openModal('basket-modal');
+                renderBasketList();
+                return;
+            }
+            gameState.basket.push(book);
+            playSound('click');
+            document.getElementById('basket-count').textContent = gameState.basket.length;
+            renderBasketList();
+            openModal('basket-modal');
+        }
+
+        function removeBookFromBasket(bookId) {
+            gameState.basket = gameState.basket.filter(b => b.id !== bookId);
+            playSound('click');
+            document.getElementById('basket-count').textContent = gameState.basket.length;
+            renderBasketList();
+        }
+
+        function renderBasketList() {
+            const list = document.getElementById('basket-items-list');
+            if (gameState.basket.length === 0) {
+                list.innerHTML = '<div class="text-center py-6 text-slate-500 text-xs">借書籃目前為空，請前往 2F 書架點擊取書</div>';
+                return;
+            }
+            list.innerHTML = gameState.basket.map(b => {
+                const isTrap = b.type.startsWith('trap');
+                return `
+                    <div class="p-3 rounded-xl bg-slate-900 border ${isTrap ? 'border-rose-500/50' : 'border-slate-700'} flex items-center justify-between">
+                        <div>
+                            <div class="text-xs font-bold ${isTrap ? 'text-rose-300' : 'text-white'}">${b.title}</div>
+                            <div class="text-[11px] ${isTrap ? 'text-rose-400' : 'text-emerald-400'}">${b.desc}</div>
+                        </div>
+                        <button onclick="removeBookFromBasket('${b.id}')" class="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 text-xs font-bold">
+                            放回書架
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function processCheckoutAtCounter() {
+            // 檢查是否有違規館藏
+            const trapItem = gameState.basket.find(b => b.type.startsWith('trap'));
+            if (trapItem) {
+                penalizeCompliance(10, `借閱失敗！籃中含有不可外借之【${trapItem.title}】（當月期刊、二樓漫畫、公播版DVD皆不可外借）！`);
+                return;
+            }
+
+            const validBooks = gameState.basket.filter(b => b.type === 'valid_book' || b.type === 'valid_mag');
+            const validDvd = gameState.basket.find(b => b.type === 'valid_dvd');
+
+            if (validBooks.length < 4 || !validDvd) {
+                showToast(`目前僅挑選了 ${validBooks.length}/4 本可外借書刊、${validDvd ? 1 : 0}/1 張家用版 DVD，請上 2F 書庫（第1,2,3,6,9排）補齊！`, 'danger');
+                return;
+            }
+
+            const qRenew = document.getElementById('quiz-renew').value;
+            const qOverdue = document.getElementById('quiz-overdue').value;
+            if (qRenew !== 'correct' || qOverdue !== '6') {
+                showToast('續借規定或逾期累計天數計算錯誤！提示：到期日前1~2日續借2週；累計每本書逾期天數為暫停天數(2+3+1=6天)。', 'danger');
+                return;
+            }
+
+            gameState.quests[2].done = true;
+            document.getElementById('counter-task3-badge').className = 'px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            document.getElementById('counter-task3-badge').textContent = '已完成借閱程序';
+            playSound('beep');
+            setTimeout(() => playSound('success'), 200);
+            showToast('🎉 完成【任務三：跨樓層尋書與借書審核】！每人最多借4本、借期2週！請前往 1F 東北角「梅高特藏區」進行任務四。', 'success');
+            renderQuestList();
+            closeModal('counter-modal');
+        }
+
+        // ==================== 任務四：梅高特藏區與報架解密 ====================
+        function unlockArchiveSafe() {
+            const q1 = document.getElementById('archive-q1').value;
+            const q2 = document.getElementById('archive-q2').value;
+            const q3 = document.getElementById('archive-q3').value;
+
+            if (q1 === 'no' && q2 === '2' && q3 === '25') {
+                gameState.hasResearchDraft = true;
+                gameState.quests[3].done = true;
+                playSound('success');
+                showToast('🎉 保險箱解鎖成功！已取得【專題研究原稿】！請前往 1F 東側「事務機器」進行任務五。', 'success');
+                renderQuestList();
+                closeModal('archive-modal');
+            } else {
+                showToast('密碼線索錯誤！提示：特藏區不外借、報架保存最近二週內報紙、中午播放 25 分鐘新聞。', 'danger');
+            }
+        }
+
+        // ==================== 任務五：事務機器悠遊卡精算實作 ====================
+        function updateMachineModalUI() {
+            document.getElementById('machine-card-balance').textContent = '$' + gameState.easyCardBalance;
+            document.getElementById('easycard-balance').textContent = gameState.easyCardBalance;
+        }
+
+        function topUpEasyCard() {
+            gameState.easyCardBalance += 10;
+            playSound('beep');
+            updateMachineModalUI();
+            document.getElementById('machine-log').textContent = `[儲值成功] 悠遊卡餘額已增至 $${gameState.easyCardBalance} 元（符合餘額 10 元以上規定）。`;
+        }
+
+        function tapEasyCardOnMachine() {
+            if (gameState.easyCardBalance < 10) {
+                playSound('alarm');
+                document.getElementById('machine-log').innerHTML = `<span class="text-rose-400">[感應失敗] 規定自備悠遊卡餘額須 10 元以上（目前僅 $${gameState.easyCardBalance} 元），請先點擊上方儲值按鈕！</span>`;
+                return;
+            }
+            gameState.easyCardTapped = true;
+            playSound('beep');
+            const badge = document.getElementById('machine-card-tapped');
+            badge.className = 'ml-2 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[11px]';
+            badge.textContent = '已靠卡感應成功';
+            document.getElementById('machine-log').textContent = `[過卡成功] 悠遊卡餘額 $${gameState.easyCardBalance} 元，請依序點選下方「掃描」、「黑白列印」、「彩色影印」。`;
+        }
+
+        function runMachineJob(jobType) {
+            if (!gameState.easyCardTapped) {
+                showToast('請先點擊「靠卡感應悠遊卡」（餘額須10元以上）！', 'danger');
+                return;
+            }
+            if (gameState.machineJobs[jobType]) {
+                showToast('此項作業已經完成囉！', 'info');
+                return;
+            }
+
+            if (jobType === 'scan') {
+                gameState.machineJobs.scan = true;
+                playSound('beep');
+                document.getElementById('job-btn-scan').classList.add('border-emerald-400', 'bg-emerald-950/40');
+                document.getElementById('machine-log').textContent = '[掃描完成] 掃描 2 頁，只需過卡無需付費（扣款 $0 元）！';
+            } else if (jobType === 'bw') {
+                if (gameState.easyCardBalance < 4) {
+                    showToast('餘額不足 $4 元，請先儲值！', 'danger');
+                    return;
+                }
+                gameState.easyCardBalance -= 4;
+                gameState.machineJobs.bw = true;
+                playSound('beep');
+                document.getElementById('job-btn-bw').classList.add('border-emerald-400', 'bg-emerald-950/40');
+                document.getElementById('machine-log').textContent = '[列印完成] 黑白列印 2 頁（每頁 2 元，扣款 $4 元）！';
+            } else if (jobType === 'color') {
+                if (gameState.easyCardBalance < 6) {
+                    showToast('餘額不足 $6 元，請先儲值！', 'danger');
+                    return;
+                }
+                gameState.easyCardBalance -= 6;
+                gameState.machineJobs.color = true;
+                playSound('beep');
+                document.getElementById('job-btn-color').classList.add('border-emerald-400', 'bg-emerald-950/40');
+                document.getElementById('machine-log').textContent = '[影印完成] 彩色影印 1 頁（每頁 6 元，扣款 $6 元）！';
+            }
+
+            updateMachineModalUI();
+
+            if (gameState.machineJobs.scan && gameState.machineJobs.bw && gameState.machineJobs.color && !gameState.quests[4].done) {
+                gameState.quests[4].done = true;
+                setTimeout(() => playSound('success'), 200);
+                showToast('🎉 完成【任務五：事務機器悠遊卡精算實作】！請前往 1F 北側「討論室」或「展示螢幕」進行最終任務六！', 'success');
+                renderQuestList();
+            }
+        }
+
+        // ==================== 任務六：空間借用審核與終極考驗 ====================
+        function submitFinalExam() {
+            const q1 = document.getElementById('final-q1').value;
+            const q2 = document.getElementById('final-q2').value;
+            const q3 = document.getElementById('final-q3').value;
+            const q4 = document.getElementById('final-q4').value;
+
+            if (q1 === 'reject' && q2 === 'correct' && q3 === 'correct' && q4 === 'correct') {
+                gameState.quests[5].done = true;
+                playSound('success');
+                renderQuestList();
+                closeModal('final-modal');
+                document.getElementById('final-score-display').textContent = gameState.complianceScore;
+                openModal('victory-modal');
+            } else {
+                showToast('部分審核答案有誤！請確認：不外借製作海報/畢冊、教師借用優先於班級借用、不發給消除缺曠證明、啟明樓1F喜閱學堂/4F紅土藝術空間。', 'danger');
+            }
+        }
+
+        /**************************************************************************
+         * 6. 樓層切換、瞬移導航與 2D 即時平面雷達圖繪製
+         **************************************************************************/
+        function switchFloorWithTransition(targetFloor, customX = null, customZ = null) {
+            playSound('click');
+            const trans = document.getElementById('floor-transition');
+            document.getElementById('floor-transition-title').textContent = `正在經由東南角樓梯前往 ${targetFloor}F...`;
+            trans.style.opacity = '1';
+            trans.style.pointerEvents = 'auto';
+
+            setTimeout(() => {
+                gameState.currentFloor = targetFloor;
+                gameState.minimapFloor = targetFloor;
+                floor1Group.visible = (targetFloor === 1);
+                floor2Group.visible = (targetFloor === 2);
+
+                if (customX !== null && customZ !== null) {
+                    player.x = customX;
+                    player.z = customZ;
+                } else if (targetFloor === 2) {
+                    player.x = 25;
+                    player.z = 16;
+                    player.yaw = 0.4;
+                } else {
+                    player.x = 26;
+                    player.z = 18;
+                    player.yaw = 0.5;
+                }
+
+                document.getElementById('floor-badge').textContent = targetFloor + 'F';
+                document.getElementById('stair-btn-label').textContent = targetFloor === 1 ? '前往 2F' : '返回 1F';
+                switchMinimapView(targetFloor);
+
+                trans.style.opacity = '0';
+                trans.style.pointerEvents = 'none';
+            }, 550);
+        }
+
+        function quickSwitchFloor() {
+            const nextFloor = gameState.currentFloor === 1 ? 2 : 1;
+            switchFloorWithTransition(nextFloor);
+        }
+
+        function teleportTo(floor, tx, tz, label) {
+            closeModal('fullmap-modal');
+            if (floor !== gameState.currentFloor) {
+                switchFloorWithTransition(floor, tx, tz);
+            } else {
+                player.x = tx;
+                player.z = tz;
+                playSound('click');
+            }
+            showToast(`已快速導航至：【${label}】`, 'info');
+        }
+
+        function autoNavigateCurrentTask() {
+            const nextQuest = gameState.quests.find(q => !q.done) || gameState.quests[0];
+            teleportTo(nextQuest.targetFloor, nextQuest.targetX, nextQuest.targetZ, nextQuest.title);
+        }
+
+        function switchMinimapView(fl) {
+            gameState.minimapFloor = fl;
+            const b1 = document.getElementById('map-btn-1f');
+            const b2 = document.getElementById('map-btn-2f');
+            if (fl === 1) {
+                b1.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-sky-500 text-slate-950';
+                b2.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-slate-300';
+            } else {
+                b2.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-amber-400 text-slate-950';
+                b1.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-slate-300';
+            }
+        }
+
+        // 在右上角 Canvas 精確繪製 1F / 2F 平面配置圖與玩家位置
+        function drawMinimap() {
+            const canvas = document.getElementById('minimap-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width;
+            const H = canvas.height;
+
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, W, H);
+
+            // 座標轉換輔助：世界座標 [-36..36, -24..24] -> Canvas [0..320, 0..200]
+            const toX = x => ((x + 36) / 72) * W;
+            const toY = z => ((z + 24) / 48) * H;
+            const rectZone = (x, z, w, d, fill, label) => {
+                const rx = toX(x - w / 2);
+                const ry = toY(z - d / 2);
+                const rw = (w / 72) * W;
+                const rh = (d / 48) * H;
+                ctx.fillStyle = fill;
+                ctx.fillRect(rx, ry, rw, rh);
+                ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+                ctx.strokeRect(rx, ry, rw, rh);
+                if (label) {
+                    ctx.fillStyle = '#f8fafc';
+                    ctx.font = 'bold 9px "Noto Sans TC", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, rx + rw / 2, ry + rh / 2);
+                }
+            };
+
+            if (gameState.minimapFloor === 1) {
+                rectZone(-15, -19.5, 34, 6.5, '#3730a3', '討論室');
+                rectZone(-12, -12.5, 25, 2.5, '#15803d', 'SDGs專區');
+                rectZone(-28.5, -12.5, 3.5, 2.5, '#0369a1', '平板');
+                rectZone(-19, -6.5, 7.5, 5.5, '#1d4ed8', '閱讀區');
+                rectZone(-9, -6.5, 7.5, 5.5, '#1d4ed8', '閱讀區');
+                rectZone(-14, 1, 18, 4.5, '#be123c', '雜誌區');
+                rectZone(-14, 9, 18, 7, '#0f766e', '曬書桌');
+                rectZone(-11, 17.5, 11, 4, '#047857', '新書區');
+                rectZone(-33, 18.5, 3.8, 7, '#0284c7', '置物櫃');
+                rectZone(-33, 2, 3, 4.5, '#d97706', '報架');
+                rectZone(6.5, 12, 5.5, 11, '#0284c7', '櫃台');
+                rectZone(21, 12, 22, 11, '#334155', '行政辦公室');
+                rectZone(20, 3.2, 21, 2.6, '#0369a1', '資訊檢索區');
+                rectZone(33, -2, 3.8, 4, '#059669', '事務機');
+                rectZone(16, -9.5, 12, 14, '#1e40af', '閱讀區');
+                rectZone(16, -21.5, 13, 2, '#d97706', '展示螢幕');
+                rectZone(31, -14, 7.5, 14, '#6b21a8', '特藏區');
+                rectZone(30, 20.5, 9, 4.5, '#b45309', '2F樓梯');
+                rectZone(0, 22.5, 5, 2, '#38bdf8', '大門');
+            } else {
+                for (let i = 0; i < 10; i++) {
+                    rectZone(-25 + i * 5.5, -8, 2.6, 14, i === 4 || i === 7 ? '#be123c' : '#0369a1', `書${i + 1}`);
+                }
+                rectZone(0, -21.5, 52, 2.2, '#475569', '閱讀座位');
+                rectZone(-32, -19, 5.5, 7, '#3730a3', '討論');
+                rectZone(32, -19, 5.5, 7, '#3730a3', '討論');
+                rectZone(-14, 10, 18, 12, '#1d4ed8', '2F閱讀區');
+                rectZone(6, 10, 18, 12, '#1d4ed8', '2F閱讀區');
+                rectZone(19, 10, 2, 11, '#0284c7', '螢幕');
+                rectZone(26, 15, 5.5, 13, '#b45309', '1F樓梯');
+                rectZone(33, 17, 4.2, 10, '#475569', '儲物');
+            }
+
+            // 繪製當前未完成任務目標閃爍點
+            const activeQuest = gameState.quests.find(q => !q.done);
+            if (activeQuest && activeQuest.targetFloor === gameState.minimapFloor) {
+                const tx = toX(activeQuest.targetX);
+                const ty = toY(activeQuest.targetZ);
+                ctx.beginPath();
+                ctx.arc(tx, ty, 6 + Math.sin(Date.now() * 0.008) * 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(251, 191, 36, 0.45)';
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(tx, ty, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#fbbf24';
+                ctx.fill();
+            }
+
+            // 繪製玩家即時座標與視角扇形
+            if (gameState.currentFloor === gameState.minimapFloor) {
+                const px = toX(player.x);
+                const py = toY(player.z);
+
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(-player.yaw);
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(-7, -14);
+                ctx.lineTo(7, -14);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(52, 211, 153, 0.35)';
+                ctx.fill();
+                ctx.restore();
+
+                ctx.beginPath();
+                ctx.arc(px, py, 4.2, 0, Math.PI * 2);
+                ctx.fillStyle = '#34d399';
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+        }
+
+        /**************************************************************************
+         * 7. HUD 介面渲染、隨身物品欄與時段模擬器
+         **************************************************************************/
+        function renderInventoryBar() {
+            const bar = document.getElementById('inventory-bar');
+            bar.innerHTML = gameState.inventory.map(item => {
+                const isSelected = gameState.activeItemId === item.id;
+                return `
+                    <button onclick="selectInventoryItem('${item.id}')" class="px-2.5 py-1.5 rounded-xl border text-left transition flex items-center gap-2 shrink-0 ${
+                        item.storedInLocker
+                            ? 'bg-slate-900/50 border-slate-800 text-slate-500'
+                            : isSelected
+                                ? 'bg-sky-500/30 border-sky-400 text-white shadow'
+                                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500'
+                    }">
+                        <i class="fa-solid ${item.icon} ${item.prohibitedInLib && !item.storedInLocker ? 'text-rose-400 animate-bounce' : 'text-sky-400'}"></i>
+                        <div>
+                            <div class="text-[11px] font-bold leading-none">${item.name}</div>
+                            <div class="text-[9px] ${item.storedInLocker ? 'text-amber-400' : 'text-slate-400'} mt-0.5">${item.storedInLocker ? '已存置物櫃' : (isSelected ? '手持中' : '隨身')}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function selectInventoryItem(id) {
+            const item = gameState.inventory.find(i => i.id === id);
+            if (!item) return;
+            gameState.activeItemId = id;
+            playSound('click');
+            renderInventoryBar();
+            showToast(`【${item.name}】${item.desc}`, 'info');
+        }
+
+        function renderQuestList() {
+            const list = document.getElementById('quest-list');
+            list.innerHTML = gameState.quests.map(q => `
+                <div class="p-2 rounded-xl border flex items-center justify-between ${
+                    q.done ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300' : 'bg-slate-900/70 border-slate-700/80 text-slate-200'
+                }">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid ${q.done ? 'fa-circle-check text-emerald-400' : 'fa-circle-dot text-sky-400'}"></i>
+                        <span class="font-bold ${q.done ? 'line-through opacity-80' : ''}">${q.title}</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded ${q.done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-sky-300'}">${q.targetFloor}F</span>
+                </div>
+            `).join('');
+
+            const current = gameState.quests.find(q => !q.done);
+            document.getElementById('current-task-hint').textContent = current ? current.hint : '恭喜！6 大連鎖實境任務已全數通關！';
+        }
+
+        function toggleQuestPanel() {
+            const content = document.getElementById('quest-content');
+            const icon = document.getElementById('quest-collapse-icon');
+            content.classList.toggle('hidden');
+            icon.className = content.classList.contains('hidden') ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up';
+        }
+
+        function changeTimeSlot(val) {
+            gameState.timeSlot = val;
+            playSound('click');
+            const badge = document.getElementById('broadcast-badge');
+            if (val === 'noon') {
+                badge.className = 'text-amber-300 font-bold';
+                badge.innerHTML = '<i class="fa-solid fa-tv mr-1"></i>1F播放25分鐘新聞(每天不同頻道)';
+                showToast('【中午時段】1F 播放 25 分鐘新聞！午休無特殊原因請回教室休息，若有急事須備有導師同意文件（不發給消除缺曠證明）。', 'info');
+            } else if (val === 'cleaning') {
+                badge.className = 'text-rose-400 font-bold';
+                badge.innerHTML = '<i class="fa-solid fa-broom mr-1"></i>打掃時間(原則不得入館)';
+                showToast('【打掃時間】規定不得入館使用（例外者需獲導師同意）！', 'danger');
+            } else if (val === 'period8') {
+                badge.className = 'text-sky-300 font-bold';
+                badge.innerHTML = '<i class="fa-solid fa-user-clock mr-1"></i>第8堂館務處理(未上輔導課可自習)';
+                showToast('【第 8 堂館務處理時間】16:00 後為館務處理時間，未上輔導課的同學可以入館自習！', 'info');
+            } else {
+                badge.className = 'text-emerald-400';
+                badge.innerHTML = '<i class="fa-solid fa-music mr-1"></i>公播輕音樂中';
+                showToast('【一般/上課時段】上課時間入館須攜帶學生證登記並獲教師同意！', 'info');
+            }
+        }
+
+        let toastTimer = null;
+        function showToast(msg, level = 'info') {
+            const banner = document.getElementById('toast-banner');
+            const text = document.getElementById('toast-text');
+            const icon = document.getElementById('toast-icon');
+            banner.classList.remove('hidden', 'border-amber-400', 'border-rose-500', 'border-emerald-400');
+
+            if (level === 'danger') {
+                banner.classList.add('border-rose-500');
+                icon.className = 'fa-solid fa-triangle-exclamation text-rose-400 text-base';
+            } else if (level === 'success') {
+                banner.classList.add('border-emerald-400');
+                icon.className = 'fa-solid fa-circle-check text-emerald-400 text-base';
+            } else {
+                banner.classList.add('border-amber-400');
+                icon.className = 'fa-solid fa-circle-info text-amber-400 text-base';
+            }
+
+            text.textContent = msg;
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => banner.classList.add('hidden'), 5200);
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        // 更新頂部所在區域文字
+        function updateCurrentZoneLabel() {
+            let zone = gameState.currentFloor === 1 ? '1F 中央走道' : '2F 書庫走道';
+            const x = player.x, z = player.z;
+            if (gameState.currentFloor === 1) {
+                if (z > 19 && Math.abs(x) < 6) zone = '1F 南側大門入口';
+                else if (x < -25 && z > 13) zone = '1F 西南角置物櫃區';
+                else if (x < -5 && z > 4 && z <= 14) zone = '1F 曬書桌區';
+                else if (x < -5 && z > -3 && z <= 4) zone = '1F 期刊雜誌區';
+                else if (x < -25 && Math.abs(z) < 6) zone = '1F 西側報架與閱讀桌';
+                else if (x < 0 && z < -15) zone = '1F 北側討論室';
+                else if (x > 2 && x < 12 && z > 5) zone = '1F 借還書櫃台';
+                else if (x > 9 && z > 0 && z < 7) zone = '1F 資訊檢索區';
+                else if (x > 27 && Math.abs(z) < 6) zone = '1F 東側事務機器區';
+                else if (x > 24 && z < -7) zone = '1F 東北角梅高特藏區';
+                else if (x > 22 && z > 15) zone = '1F 東南角往 2F 樓梯口';
+            } else {
+                if (z < 0) zone = '2F 北側 1~10 排書庫區';
+                else if (x > 20 && z > 8) zone = '2F 東南角往 1F 樓梯與儲物室';
+                else zone = '2F 南側大型閱讀區';
+            }
+            document.getElementById('zone-name-display').textContent = zone;
+        }
+
+        /**************************************************************************
+         * 8. 事件監聽與主遊戲迴圈 (Animation Loop)
+         **************************************************************************/
+        function bindInputEvents() {
+            window.addEventListener('keydown', e => {
+                if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+                const code = e.code;
+                if (code === 'KeyW' || code === 'ArrowUp') moveKeys.forward = true;
+                if (code === 'KeyS' || code === 'ArrowDown') moveKeys.backward = true;
+                if (code === 'KeyA' || code === 'ArrowLeft') moveKeys.left = true;
+                if (code === 'KeyD' || code === 'ArrowRight') moveKeys.right = true;
+                if (code === 'KeyE' || code === 'Space') interactWithCurrentTarget();
+                if (code === 'ShiftLeft' || code === 'ShiftRight') {
+                    if (!gameState.isSprinting) toggleSprintMode();
+                }
+            });
+
+            window.addEventListener('keyup', e => {
+                const code = e.code;
+                if (code === 'KeyW' || code === 'ArrowUp') moveKeys.forward = false;
+                if (code === 'KeyS' || code === 'ArrowDown') moveKeys.backward = false;
+                if (code === 'KeyA' || code === 'ArrowLeft') moveKeys.left = false;
+                if (code === 'KeyD' || code === 'ArrowRight') moveKeys.right = false;
+            });
+
+            // 滑鼠拖曳旋轉視角 + 點擊 3D 物件直接互動
+            let isDragging = false;
+            let dragMoved = false;
+            let prevX = 0, prevY = 0;
+            const canvasEl = document.getElementById('canvas-container');
+
+            canvasEl.addEventListener('mousedown', e => {
+                isDragging = true;
+                dragMoved = false;
+                prevX = e.clientX;
+                prevY = e.clientY;
+            });
+
+            window.addEventListener('mousemove', e => {
+                if (!isDragging) return;
+                const dx = e.clientX - prevX;
+                const dy = e.clientY - prevY;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+                player.yaw -= dx * 0.0045;
+                player.pitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, player.pitch - dy * 0.0035));
+                prevX = e.clientX;
+                prevY = e.clientY;
+            });
+
+            window.addEventListener('mouseup', e => {
+                if (isDragging && !dragMoved && e.target.tagName === 'CANVAS') {
+                    // 直接點擊畫面上的 3D 物件也能觸發互動
+                    const rect = renderer.domElement.getBoundingClientRect();
+                    const mouse = new THREE.Vector2(
+                        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+                        -((e.clientY - rect.top) / rect.height) * 2 + 1
+                    );
+                    const raycaster = new THREE.Raycaster();
+                    raycaster.setFromCamera(mouse, camera);
+                    const floorMeshes = interactableMeshes.filter(m => m.userData.floor === gameState.currentFloor);
+                    const hits = raycaster.intersectObjects(floorMeshes, false);
+                    if (hits.length > 0 && hits[0].distance < 15) {
+                        handleObjectInteraction(hits[0].object.userData);
+                    }
+                }
+                isDragging = false;
+            });
+
+            // 觸控拖曳視角支援
+            canvasEl.addEventListener('touchstart', e => {
+                if (e.touches.length === 1) {
+                    isDragging = true;
+                    prevX = e.touches[0].clientX;
+                    prevY = e.touches[0].clientY;
+                }
+            }, { passive: true });
+
+            canvasEl.addEventListener('touchmove', e => {
+                if (!isDragging || e.touches.length !== 1) return;
+                const dx = e.touches[0].clientX - prevX;
+                const dy = e.touches[0].clientY - prevY;
+                player.yaw -= dx * 0.005;
+                player.pitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, player.pitch - dy * 0.004));
+                prevX = e.touches[0].clientX;
+                prevY = e.touches[0].clientY;
+            }, { passive: true });
+
+            canvasEl.addEventListener('touchend', () => { isDragging = false; });
+
+            window.addEventListener('resize', () => {
+                if (!camera || !renderer) return;
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        let prevTime = performance.now();
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            const dt = Math.min((now - prevTime) / 1000, 0.1);
+            prevTime = now;
+
+            // 計算移動向量
+            const speed = gameState.isSprinting ? 14.5 : 8.2;
+            let moveZ = 0, moveX = 0;
+            if (moveKeys.forward) moveZ -= 1;
+            if (moveKeys.backward) moveZ += 1;
+            if (moveKeys.left) moveX -= 1;
+            if (moveKeys.right) moveX += 1;
+
+            if (moveZ !== 0 || moveX !== 0) {
+                const len = Math.hypot(moveX, moveZ);
+                moveX /= len;
+                moveZ /= len;
+
+                const sin = Math.sin(player.yaw);
+                const cos = Math.cos(player.yaw);
+                const dx = (moveX * cos + moveZ * sin) * speed * dt;
+                const dz = (moveZ * cos - moveX * sin) * speed * dt;
+
+                if (!checkCollision(player.x + dx, player.z)) player.x += dx;
+                if (!checkCollision(player.x, player.z + dz)) player.z += dz;
+
+                // 腳步音效與輕微鏡頭晃動
+                stepTimer += dt * (gameState.isSprinting ? 2.2 : 1.3);
+                if (stepTimer > 0.42) {
+                    stepTimer = 0;
+                    playSound('step');
+                    if (gameState.isSprinting && Math.random() < 0.25) {
+                        penalizeCompliance(2, '館內禁止奔跑！請切換為慢步安靜模式！');
+                    }
+                }
+                camera.position.y = player.y + Math.sin(now * 0.012) * 0.045;
+                checkGateAndRFIDRules();
+                updateCurrentZoneLabel();
+            } else {
+                camera.position.y = player.y;
+            }
+
+            camera.position.x = player.x;
+            camera.position.z = player.z;
+            camera.rotation.y = player.yaw;
+            camera.rotation.x = player.pitch;
+
+            updateRaycasterTarget();
+            drawMinimap();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function () {
+            initThreeWorld();
+            bindInputEvents();
+            renderInventoryBar();
+            renderQuestList();
+            renderBasketList();
+            animate();
+        };
+    </script>
+</body>
+</html>
